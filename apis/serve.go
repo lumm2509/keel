@@ -211,7 +211,12 @@ func collectHostNames(mainAddr string, certificateDomains []string) ([]string, [
 }
 
 func buildCertManager[Cradle any](ctr container.Container[Cradle], hostNames []string) (*autocert.Manager, error) {
-	httpConfig := ctr.Config().Projectconfig.Http
+	cfg := ctr.Config()
+	if cfg == nil {
+		return nil, nil
+	}
+
+	httpConfig := cfg.Projectconfig.Http
 	if httpConfig == nil || httpConfig.AutoCert == nil {
 		return nil, nil
 	}
@@ -224,7 +229,12 @@ func buildCertManager[Cradle any](ctr container.Container[Cradle], hostNames []s
 
 	var cache autocert.Cache
 	if cacheDir != "" {
-		cache = autocert.DirCache(filepath.Join(ctr.DataDir(), cacheDir))
+		dataDir := ctr.DataDir()
+		if dataDir == "" {
+			return nil, errors.New("autocert cache dir requires container data dir")
+		}
+
+		cache = autocert.DirCache(filepath.Join(dataDir, cacheDir))
 	}
 
 	hosts := hostNames

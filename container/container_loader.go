@@ -17,11 +17,14 @@ import (
 
 var _ Container[any] = (*BaseContainer[any])(nil)
 
-var errMissingConfig = errors.New("container config is required")
+var errDataDirNotConfigured = errors.New("container data dir is not configured")
+var errContainerReloadNotImplemented = errors.New("container reload is not implemented")
+var errContainerRestartNotImplemented = errors.New("container restart is not implemented")
 
 type BaseContainer[Cradle any] struct {
 	config              *config.ConfigModule
 	cradle              *Cradle
+	bootstrapped        bool
 	db                  *sql.DB
 	store               *store.Store[string, any]
 	cron                *cron.Cron
@@ -71,6 +74,7 @@ func (b *BaseContainer[Cradle]) Bootstrap() error {
 			return err
 		}
 
+		b.bootstrapped = true
 		return nil
 	})
 
@@ -103,17 +107,17 @@ func (b *BaseContainer[Cradle]) DataBase() *sql.DB {
 
 // DataDir implements [Container].
 func (b *BaseContainer[Cradle]) DataDir() string {
-	panic("unimplemented")
+	return ""
 }
 
 // EncryptionEnv implements [Container].
 func (b *BaseContainer[Cradle]) EncryptionEnv() string {
-	panic("unimplemented")
+	return ""
 }
 
 // IsBootstrapped implements [Container].
 func (b *BaseContainer[Cradle]) IsBootstrapped() bool {
-	return b.db != nil
+	return b.bootstrapped
 }
 
 // IsDev implements [Container].
@@ -136,7 +140,12 @@ func (b *BaseContainer[Cradle]) Logger() *slog.Logger {
 
 // NewFilesystem implements [Container].
 func (b *BaseContainer[Cradle]) NewFilesystem() (*filesystem.System, error) {
-	panic("unimplemented")
+	dataDir := b.DataDir()
+	if dataDir == "" {
+		return nil, errDataDirNotConfigured
+	}
+
+	return filesystem.NewLocal(dataDir)
 }
 
 // OnBootstrap implements [Container].
@@ -168,12 +177,13 @@ func (b *BaseContainer[Cradle]) OnTerminate() *hook.Hook[*TerminateEvent[Cradle]
 
 // ReloadSettings implements [Container].
 func (b *BaseContainer[Cradle]) ReloadSettings() error {
-	panic("unimplemented")
+	return errContainerReloadNotImplemented
 }
 
 // ResetBootstrapState implements [Container].
 func (b *BaseContainer[Cradle]) ResetBootstrapState() error {
 	b.Cron().Stop()
+	b.bootstrapped = false
 
 	if b.db == nil {
 		return nil
@@ -187,7 +197,7 @@ func (b *BaseContainer[Cradle]) ResetBootstrapState() error {
 
 // Restart implements [Container].
 func (b *BaseContainer[Cradle]) Restart() error {
-	panic("unimplemented")
+	return errContainerRestartNotImplemented
 }
 
 // Store implements [Container].
@@ -222,13 +232,17 @@ func (b *BaseContainer[Cradle]) initDataDB() error {
 
 func (b *BaseContainer[Cradle]) connectDataDB() (*sql.DB, error) {
 	if b.config == nil {
-		return nil, errMissingConfig
+		return nil, nil
 	}
 
 	options := database.Options{}
 
 	if b.config.Projectconfig.DatabaseUrl != nil {
 		options.URL = *b.config.Projectconfig.DatabaseUrl
+	}
+
+	if options.URL == "" {
+		return nil, nil
 	}
 
 	if driverOptions := b.config.Projectconfig.DatabaseDriverOptions; driverOptions != nil {

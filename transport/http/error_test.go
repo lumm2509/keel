@@ -295,7 +295,7 @@ func TestToApiError(t *testing.T) {
 		{
 			"regular error",
 			errors.New("test"),
-			`{"data":{},"message":"Something went wrong while processing your request.","status":400}`,
+			`{"data":{},"message":"Something went wrong while processing your request.","status":500}`,
 		},
 		{
 			"fs.ErrNotExist",

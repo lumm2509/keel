@@ -139,7 +139,7 @@ func ToApiError(err error) *ApiError {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, fs.ErrNotExist) {
 			apiErr = NewNotFoundError("", err)
 		} else {
-			apiErr = NewBadRequestError("", err)
+			apiErr = NewInternalServerError("", err)
 		}
 	}
 

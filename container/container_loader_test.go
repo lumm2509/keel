@@ -122,14 +122,71 @@ func TestBootstrapInitializesDatabaseAndExposesIt(t *testing.T) {
 	}
 }
 
-func TestBootstrapFailsWithoutDatabaseURL(t *testing.T) {
+func TestBootstrapWithoutDatabaseURLKeepsContainerUsable(t *testing.T) {
 	type cradle struct{}
 
 	container := LoadBasecontainer[cradle](&config.ConfigModule{})
 
 	err := container.Bootstrap()
+	if err != nil {
+		t.Fatalf("expected Bootstrap() to succeed without database url, got %v", err)
+	}
+
+	if !container.IsBootstrapped() {
+		t.Fatalf("expected container to be bootstrapped without database url")
+	}
+
+	if container.DataBase() != nil {
+		t.Fatalf("expected database to remain nil when no database url is configured")
+	}
+}
+
+func TestBootstrapWithoutConfigKeepsContainerUsable(t *testing.T) {
+	type cradle struct{}
+
+	container := LoadBasecontainer[cradle](nil)
+
+	if err := container.Bootstrap(); err != nil {
+		t.Fatalf("expected Bootstrap() to succeed without config, got %v", err)
+	}
+
+	if !container.IsBootstrapped() {
+		t.Fatalf("expected container to be bootstrapped without config")
+	}
+
+	if container.DataBase() != nil {
+		t.Fatalf("expected database to remain nil when config is missing")
+	}
+}
+
+func TestBaseContainerOptionalCapabilitiesReturnExplicitDefaults(t *testing.T) {
+	type cradle struct{}
+
+	container := LoadBasecontainer[cradle](&config.ConfigModule{})
+
+	if got := container.DataDir(); got != "" {
+		t.Fatalf("expected empty data dir by default, got %q", got)
+	}
+
+	if got := container.EncryptionEnv(); got != "" {
+		t.Fatalf("expected empty encryption env by default, got %q", got)
+	}
+
+	fs, err := container.NewFilesystem()
 	if err == nil {
-		t.Fatalf("expected Bootstrap() to fail without database url")
+		t.Fatalf("expected NewFilesystem() to fail without configured data dir, got fs=%v", fs)
+	}
+
+	if !errors.Is(err, errDataDirNotConfigured) {
+		t.Fatalf("expected errDataDirNotConfigured, got %v", err)
+	}
+
+	if err := container.ReloadSettings(); !errors.Is(err, errContainerReloadNotImplemented) {
+		t.Fatalf("expected errContainerReloadNotImplemented, got %v", err)
+	}
+
+	if err := container.Restart(); !errors.Is(err, errContainerRestartNotImplemented) {
+		t.Fatalf("expected errContainerRestartNotImplemented, got %v", err)
 	}
 }
 
