@@ -2,7 +2,6 @@ package keel
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"log"
@@ -17,21 +16,22 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/lumm2509/keel/apis"
+	"github.com/lumm2509/keel/commands"
 	"github.com/lumm2509/keel/config"
 	"github.com/lumm2509/keel/container"
 	"github.com/lumm2509/keel/pkg/list"
 	"github.com/lumm2509/keel/runtime/hook"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
-	"golang.org/x/sync/errgroup"
 )
 
 var Version = "(untracked)"
 
 type BindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error)
 type HMRFunc func(context.Context) error
+type ServeConfig = apis.ServeConfig
 
 type BootstrapEvent[C any] struct {
 	hook.Event
@@ -414,83 +414,34 @@ func (a *App[Cradle]) routeBinder() BindRoutesFunc[Cradle] {
 }
 
 func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
-	var allowedOrigins []string
-	var httpAddr string
-	var httpsAddr string
+	var hmr commands.HMRFunc
+	if a.hmr != nil {
+		hmr = func(ctx context.Context) error {
+			return a.hmr(ctx)
+		}
+	}
 
-	command := &cobra.Command{
-		Use:          "develop [domain(s)]",
-		Args:         cobra.ArbitraryArgs,
-		Short:        "Starts the dev server and optional HMR loop",
-		SilenceUsage: true,
-		RunE: func(command *cobra.Command, args []string) error {
+	return commands.NewDevelopCommand(
+		hmr,
+		!a.hideStartBanner,
+		func(cfg apis.ServeConfig) error {
 			if a.bindRoutes != nil && a.usesFacade {
 				return errors.New("cannot combine App route facade methods with BindRoutes")
 			}
 			if a.bindRoutes == nil && !a.usesFacade {
 				return errors.New("develop command requires routes")
 			}
-
-			if len(args) > 0 {
-				if httpAddr == "" {
-					httpAddr = "0.0.0.0:80"
-				}
-				if httpsAddr == "" {
-					httpsAddr = "0.0.0.0:443"
-				}
-			} else if httpAddr == "" {
-				httpAddr = "127.0.0.1:8090"
+			err := a.serve(cfg)
+			if errors.Is(err, stdhttp.ErrServerClosed) {
+				return nil
 			}
-
-			g, ctx := errgroup.WithContext(command.Context())
-
-			if a.hmr != nil {
-				g.Go(func() error {
-					err := a.hmr(ctx)
-					if err != nil && !errors.Is(err, context.Canceled) {
-						return err
-					}
-					return nil
-				})
-			}
-
-			g.Go(func() error {
-				err := a.serve(ServeConfig{
-					HttpAddr:           httpAddr,
-					HttpsAddr:          httpsAddr,
-					ShowStartBanner:    !a.hideStartBanner,
-					AllowedOrigins:     allowedOrigins,
-					CertificateDomains: args,
-				})
-				if errors.Is(err, stdhttp.ErrServerClosed) {
-					return nil
-				}
-				return err
-			})
-
-			return g.Wait()
+			return err
 		},
-	}
-
-	command.PersistentFlags().StringSliceVar(&allowedOrigins, "origins", []string{"*"}, "CORS allowed domain origins list")
-	command.PersistentFlags().StringVar(&httpAddr, "http", "", "TCP address to listen for the HTTP server")
-	command.PersistentFlags().StringVar(&httpsAddr, "https", "", "TCP address to listen for the HTTPS server")
-
-	return command
-}
-
-type ServeConfig struct {
-	ShowStartBanner    bool
-	HttpAddr           string
-	HttpsAddr          string
-	CertificateDomains []string
-	AllowedOrigins     []string
+	)
 }
 
 func (a *App[Cradle]) serve(config ServeConfig) error {
-	if len(config.AllowedOrigins) == 0 {
-		config.AllowedOrigins = []string{"*"}
-	}
+	config.AllowedOrigins = apis.AllowedOrigins(apis.HTTP(a.config), config.AllowedOrigins)
 
 	router, err := a.routeBinder()(a.container)
 	if err != nil {
@@ -502,12 +453,16 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 		mainAddr = config.HttpsAddr
 	}
 
-	hostNames, wwwRedirects := collectHostNames(mainAddr, config.CertificateDomains)
+	hostNames, wwwRedirects := apis.HostNames(mainAddr, config.CertificateDomains)
 	if len(wwwRedirects) > 0 {
 		router.Bind(wwwRedirect[Cradle](wwwRedirects))
 	}
 
-	certManager, err := buildCertManager(a.config, a.container.DataDir(), hostNames)
+	dataDir := ""
+	if provider, ok := any(a.container).(container.DataDirProvider); ok {
+		dataDir = provider.DataDir()
+	}
+	certManager, err := apis.CertManager(a.config, dataDir, hostNames)
 	if err != nil {
 		return err
 	}
@@ -526,13 +481,7 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 		ErrorLog: log.New(&serverErrorLogWriter[Cradle]{container: a.container}, "", 0),
 	}
 
-	if certManager != nil {
-		server.TLSConfig = &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
-		}
-	}
+	server.TLSConfig = apis.TLSConfig(server.TLSConfig, certManager)
 
 	var listener net.Listener
 	var wg sync.WaitGroup
@@ -581,8 +530,8 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 			return err
 		}
 
-		e.Server.Handler = handler
-		baseURL = resolveBaseURL(config, e.Server.Addr)
+		e.Server.Handler = apis.CORS(handler, config.AllowedOrigins)
+		baseURL = apis.BaseURL(config, e.Server.Addr)
 
 		addr := e.Server.Addr
 		if addr == "" {
@@ -612,7 +561,7 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	}
 
 	if config.ShowStartBanner {
-		printStartBanner(baseURL)
+		apis.StartBanner(baseURL)
 	}
 
 	a.container.Logger().Info(
@@ -639,107 +588,6 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	}
 
 	return nil
-}
-
-func collectHostNames(mainAddr string, certificateDomains []string) ([]string, []string) {
-	var wwwRedirects []string
-	hostNames := append([]string(nil), certificateDomains...)
-
-	if len(hostNames) == 0 {
-		host, _, _ := net.SplitHostPort(mainAddr)
-		if host != "" {
-			hostNames = append(hostNames, host)
-		}
-	}
-
-	for _, host := range append([]string(nil), hostNames...) {
-		if host == "" || strings.HasPrefix(host, "www.") {
-			continue
-		}
-
-		wwwHost := "www." + host
-		if !list.ExistInSlice(wwwHost, hostNames) {
-			hostNames = append(hostNames, wwwHost)
-			wwwRedirects = append(wwwRedirects, wwwHost)
-		}
-	}
-
-	return hostNames, wwwRedirects
-}
-
-func buildCertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (*autocert.Manager, error) {
-	if cfg == nil {
-		return nil, nil
-	}
-
-	httpConfig := cfg.Projectconfig.Http
-	if httpConfig == nil || httpConfig.AutoCert == nil {
-		return nil, nil
-	}
-
-	autoCert := httpConfig.AutoCert
-	cacheDir := ""
-	if autoCert.CacheDir != nil {
-		cacheDir = *autoCert.CacheDir
-	}
-
-	var cache autocert.Cache
-	if cacheDir != "" {
-		if dataDir == "" {
-			return nil, errors.New("autocert cache dir requires container data dir")
-		}
-		cache = autocert.DirCache(filepath.Join(dataDir, cacheDir))
-	}
-
-	hosts := hostNames
-	if len(autoCert.HostWhitelist) > 0 {
-		hosts = autoCert.HostWhitelist
-	}
-
-	manager := &autocert.Manager{
-		Prompt: autocert.AcceptTOS,
-		Cache:  cache,
-	}
-
-	if autoCert.Email != nil {
-		manager.Email = *autoCert.Email
-	}
-
-	if len(hosts) > 0 {
-		manager.HostPolicy = autocert.HostWhitelist(hosts...)
-	}
-
-	return manager, nil
-}
-
-func resolveBaseURL(config ServeConfig, addr string) string {
-	host := serverAddrToHost(addr)
-	if config.HttpsAddr != "" {
-		if len(config.CertificateDomains) > 0 {
-			host = config.CertificateDomains[0]
-		}
-		return "https://" + host
-	}
-	return "http://" + host
-}
-
-func printStartBanner(baseURL string) {
-	date := new(strings.Builder)
-	log.New(date, "", log.LstdFlags).Print()
-
-	bold := color.New(color.Bold).Add(color.FgGreen)
-	bold.Printf("%s Server started at %s\n", strings.TrimSpace(date.String()), color.CyanString("%s", baseURL))
-
-	regular := color.New()
-	regular.Printf("├─ REST API:  %s\n", color.CyanString("%s/api/", baseURL))
-	regular.Printf("└─ Dashboard: %s\n", color.CyanString("%s/_/", baseURL))
-}
-
-func serverAddrToHost(addr string) string {
-	if addr == "" || strings.HasSuffix(addr, ":http") || strings.HasSuffix(addr, ":https") {
-		return "127.0.0.1"
-	}
-	return addr
 }
 
 type serverErrorLogWriter[Cradle any] struct {

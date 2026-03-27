@@ -3,27 +3,15 @@ package commands
 import (
 	"context"
 	"errors"
-	"net/http"
 
 	"github.com/lumm2509/keel/apis"
-	"github.com/lumm2509/keel/config"
-	"github.com/lumm2509/keel/container"
-	transporthttp "github.com/lumm2509/keel/transport/http"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
 
-type BindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error)
-
 type HMRFunc func(ctx context.Context) error
 
-func NewDevelopCommand[Cradle any](
-	ctr container.Container[Cradle],
-	cfg *config.ConfigModule,
-	bindRoutes BindRoutesFunc[Cradle],
-	hmr HMRFunc,
-	showStartBanner bool,
-) *cobra.Command {
+func NewDevelopCommand(hmr HMRFunc, showStartBanner bool, serve func(apis.ServeConfig) error) *cobra.Command {
 	var allowedOrigins []string
 	var httpAddr string
 	var httpsAddr string
@@ -34,8 +22,8 @@ func NewDevelopCommand[Cradle any](
 		Short:        "Starts the dev server and optional HMR loop",
 		SilenceUsage: true,
 		RunE: func(command *cobra.Command, args []string) error {
-			if bindRoutes == nil {
-				return errors.New("develop command requires a routes binder")
+			if serve == nil {
+				return errors.New("develop command requires a serve function")
 			}
 
 			if len(args) > 0 {
@@ -62,19 +50,13 @@ func NewDevelopCommand[Cradle any](
 			}
 
 			g.Go(func() error {
-				err := apis.Serve(ctr, cfg, apis.ServeConfig{
+				return serve(apis.ServeConfig{
 					HttpAddr:           httpAddr,
 					HttpsAddr:          httpsAddr,
 					ShowStartBanner:    showStartBanner,
 					AllowedOrigins:     allowedOrigins,
 					CertificateDomains: args,
-				}, bindRoutes)
-
-				if errors.Is(err, http.ErrServerClosed) {
-					return nil
-				}
-
-				return err
+				})
 			})
 
 			return g.Wait()

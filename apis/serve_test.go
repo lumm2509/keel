@@ -1,8 +1,9 @@
 package apis
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/lumm2509/keel/config"
 )
@@ -10,9 +11,9 @@ import (
 func TestBuildCertManagerWithoutConfigReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	manager, err := buildCertManager(nil, "", nil)
+	manager, err := CertManager(nil, "", nil)
 	if err != nil {
-		t.Fatalf("buildCertManager() error = %v", err)
+		t.Fatalf("CertManager() error = %v", err)
 	}
 
 	if manager != nil {
@@ -26,23 +27,7 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 	cacheDir := "autocert"
 	cfg := &config.ConfigModule{
 		Projectconfig: config.ProjectConfigOptions{
-			Http: &struct {
-				JwtSecret           *string                        `json:"jwtSecret,omitempty" xml:"jwtSecret,omitempty" form:"jwtSecret,omitempty"`
-				JwtPublicKey        *string                        `json:"jwtPublicKey,omitempty" xml:"jwtPublicKey,omitempty" form:"jwtPublicKey,omitempty"`
-				JwtOptions          *string                        `json:"jwtOptions,omitempty" xml:"jwtOptions,omitempty" form:"jwtOptions,omitempty"`
-				JwtVerifyOptions    *string                        `json:"jwtVerifyOptions,omitempty" xml:"jwtVerifyOptions,omitempty" form:"jwtVerifyOptions,omitempty"`
-				JwtExpiresIn        *time.Time                     `json:"jwtExpiresIn,omitempty" xml:"jwtExpiresIn,omitempty" form:"jwtExpiresIn,omitempty"`
-				CookieSecret        *string                        `json:"cookieSecret,omitempty" xml:"cookieSecret,omitempty" form:"cookieSecret,omitempty"`
-				AuthCors            string                         `json:"authCors,omitempty" xml:"authCors,omitempty" form:"authCors,omitempty"`
-				Compression         *config.HttpCompressionOptions `json:"compression,omitempty" xml:"compression,omitempty" form:"compression,omitempty"`
-				AdminCors           *string                        `json:"adminCors,omitempty" xml:"adminCors,omitempty" form:"adminCors,omitempty"`
-				AuthMethodsPerActor map[string][]string            `json:"authMethodsPerActor,omitempty" xml:"authMethodsPerActor,omitempty" form:"authMethodsPerActor,omitempty"`
-				AutoCert            *struct {
-					CacheDir      *string  `json:"cacheDir,omitempty"`
-					HostWhitelist []string `json:"hostWhitelist,omitempty"`
-					Email         *string  `json:"email,omitempty"`
-				} `json:"autoCert,omitempty"`
-			}{
+			Http: &config.HttpConfigOptions{
 				AutoCert: &struct {
 					CacheDir      *string  `json:"cacheDir,omitempty"`
 					HostWhitelist []string `json:"hostWhitelist,omitempty"`
@@ -54,12 +39,74 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 		},
 	}
 
-	_, err := buildCertManager(cfg, "", nil)
+	_, err := CertManager(cfg, "", nil)
 	if err == nil {
-		t.Fatalf("expected buildCertManager() to fail when cache dir is configured without data dir")
+		t.Fatalf("expected CertManager() to fail when cache dir is configured without data dir")
 	}
 
 	if err.Error() != "autocert cache dir requires container data dir" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAllowedOrigins(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.ConfigModule{
+		Projectconfig: config.ProjectConfigOptions{
+			Http: &config.HttpConfigOptions{
+				AllowedOrigins: []string{"https://cfg.example"},
+			},
+		},
+	}
+
+	if got := AllowedOrigins(HTTP(cfg), nil); len(got) != 1 || got[0] != "https://cfg.example" {
+		t.Fatalf("expected config origins, got %#v", got)
+	}
+
+	if got := AllowedOrigins(HTTP(cfg), []string{"https://flag.example"}); len(got) != 1 || got[0] != "https://flag.example" {
+		t.Fatalf("expected explicit origins to override config, got %#v", got)
+	}
+}
+
+func TestWrapCORSAllowedOrigin(t *testing.T) {
+	t.Parallel()
+
+	handler := CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"https://app.example"})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://app.example")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example" {
+		t.Fatalf("expected allow origin header, got %q", got)
+	}
+}
+
+func TestWrapCORSOptionsDisallowedOrigin(t *testing.T) {
+	t.Parallel()
+
+	handler := CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not run for OPTIONS preflight")
+	}), []string{"https://app.example"})
+
+	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req.Header.Set("Origin", "https://other.example")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no allow origin header, got %q", got)
 	}
 }

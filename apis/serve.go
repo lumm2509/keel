@@ -2,33 +2,19 @@ package apis
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"log"
 	"net"
 	stdhttp "net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/lumm2509/keel/config"
 	"github.com/lumm2509/keel/container"
 	"github.com/lumm2509/keel/pkg/list"
 	"github.com/lumm2509/keel/runtime/hook"
 	transporthttp "github.com/lumm2509/keel/transport/http"
-	"golang.org/x/crypto/acme"
-	"golang.org/x/crypto/acme/autocert"
 )
-
-// ServeConfig defines a configuration struct for apis.Serve().
-type ServeConfig struct {
-	ShowStartBanner    bool
-	HttpAddr           string
-	HttpsAddr          string
-	CertificateDomains []string
-	AllowedOrigins     []string
-}
 
 // Serve starts a new app web server.
 func Serve[Cradle any](
@@ -37,9 +23,7 @@ func Serve[Cradle any](
 	config ServeConfig,
 	bindRoutes func(ctr container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error),
 ) error {
-	if len(config.AllowedOrigins) == 0 {
-		config.AllowedOrigins = []string{"*"}
-	}
+	config.AllowedOrigins = AllowedOrigins(HTTP(cfg), config.AllowedOrigins)
 
 	router, err := bindRoutes(ctr)
 	if err != nil {
@@ -51,12 +35,16 @@ func Serve[Cradle any](
 		mainAddr = config.HttpsAddr
 	}
 
-	hostNames, wwwRedirects := collectHostNames(mainAddr, config.CertificateDomains)
+	hostNames, wwwRedirects := HostNames(mainAddr, config.CertificateDomains)
 	if len(wwwRedirects) > 0 {
 		router.Bind(wwwRedirect[Cradle](wwwRedirects))
 	}
 
-	certManager, err := buildCertManager(cfg, ctr.DataDir(), hostNames)
+	dataDir := ""
+	if provider, ok := any(ctr).(container.DataDirProvider); ok {
+		dataDir = provider.DataDir()
+	}
+	certManager, err := CertManager(cfg, dataDir, hostNames)
 	if err != nil {
 		return err
 	}
@@ -75,13 +63,7 @@ func Serve[Cradle any](
 		ErrorLog: log.New(&serverErrorLogWriter[Cradle]{container: ctr}, "", 0),
 	}
 
-	if certManager != nil {
-		server.TLSConfig = &tls.Config{
-			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
-			NextProtos:     []string{acme.ALPNProto},
-		}
-	}
+	server.TLSConfig = TLSConfig(server.TLSConfig, certManager)
 
 	var listener net.Listener
 
@@ -99,8 +81,8 @@ func Serve[Cradle any](
 		return err
 	}
 
-	server.Handler = handler
-	baseURL = resolveBaseURL(config, server.Addr)
+	server.Handler = CORS(handler, config.AllowedOrigins)
+	baseURL = BaseURL(config, server.Addr)
 
 	addr := server.Addr
 	if addr == "" {
@@ -117,7 +99,7 @@ func Serve[Cradle any](
 	}
 
 	if config.ShowStartBanner {
-		printStartBanner(baseURL)
+		StartBanner(baseURL)
 	}
 
 	if config.HttpsAddr != "" {
@@ -137,109 +119,6 @@ func Serve[Cradle any](
 	}
 
 	return nil
-}
-
-func collectHostNames(mainAddr string, certificateDomains []string) ([]string, []string) {
-	var wwwRedirects []string
-	hostNames := append([]string(nil), certificateDomains...)
-
-	if len(hostNames) == 0 {
-		host, _, _ := net.SplitHostPort(mainAddr)
-		if host != "" {
-			hostNames = append(hostNames, host)
-		}
-	}
-
-	for _, host := range append([]string(nil), hostNames...) {
-		if host == "" || strings.HasPrefix(host, "www.") {
-			continue
-		}
-
-		wwwHost := "www." + host
-		if !list.ExistInSlice(wwwHost, hostNames) {
-			hostNames = append(hostNames, wwwHost)
-			wwwRedirects = append(wwwRedirects, wwwHost)
-		}
-	}
-
-	return hostNames, wwwRedirects
-}
-
-func buildCertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (*autocert.Manager, error) {
-	if cfg == nil {
-		return nil, nil
-	}
-
-	httpConfig := cfg.Projectconfig.Http
-	if httpConfig == nil || httpConfig.AutoCert == nil {
-		return nil, nil
-	}
-
-	autoCert := httpConfig.AutoCert
-	cacheDir := ""
-	if autoCert.CacheDir != nil {
-		cacheDir = *autoCert.CacheDir
-	}
-
-	var cache autocert.Cache
-	if cacheDir != "" {
-		if dataDir == "" {
-			return nil, errors.New("autocert cache dir requires container data dir")
-		}
-
-		cache = autocert.DirCache(filepath.Join(dataDir, cacheDir))
-	}
-
-	hosts := hostNames
-	if len(autoCert.HostWhitelist) > 0 {
-		hosts = autoCert.HostWhitelist
-	}
-
-	manager := &autocert.Manager{
-		Prompt: autocert.AcceptTOS,
-		Cache:  cache,
-	}
-
-	if autoCert.Email != nil {
-		manager.Email = *autoCert.Email
-	}
-
-	if len(hosts) > 0 {
-		manager.HostPolicy = autocert.HostWhitelist(hosts...)
-	}
-
-	return manager, nil
-}
-
-func resolveBaseURL(config ServeConfig, addr string) string {
-	host := serverAddrToHost(addr)
-	if config.HttpsAddr != "" {
-		if len(config.CertificateDomains) > 0 {
-			host = config.CertificateDomains[0]
-		}
-		return "https://" + host
-	}
-
-	return "http://" + host
-}
-
-func printStartBanner(baseURL string) {
-	date := new(strings.Builder)
-	log.New(date, "", log.LstdFlags).Print()
-
-	bold := color.New(color.Bold).Add(color.FgGreen)
-	bold.Printf("%s Server started at %s\n", strings.TrimSpace(date.String()), color.CyanString("%s", baseURL))
-
-	regular := color.New()
-	regular.Printf("├─ REST API:  %s\n", color.CyanString("%s/api/", baseURL))
-	regular.Printf("└─ Dashboard: %s\n", color.CyanString("%s/_/", baseURL))
-}
-
-func serverAddrToHost(addr string) string {
-	if addr == "" || strings.HasSuffix(addr, ":http") || strings.HasSuffix(addr, ":https") {
-		return "127.0.0.1"
-	}
-	return addr
 }
 
 type serverErrorLogWriter[Cradle any] struct {
