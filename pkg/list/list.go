@@ -11,13 +11,30 @@ import (
 
 var cachedPatterns = store.New[string, *regexp.Regexp](nil)
 
+const subtractSliceSetThreshold = 8
+
 // SubtractSlice returns a new slice with only the "base" elements
 // that don't exist in "subtract".
 func SubtractSlice[T comparable](base []T, subtract []T) []T {
-	var result = make([]T, 0, len(base))
+	result := make([]T, 0, len(base))
+
+	if len(subtract) < subtractSliceSetThreshold {
+		for _, b := range base {
+			if !ExistInSlice(b, subtract) {
+				result = append(result, b)
+			}
+		}
+
+		return result
+	}
+
+	subtractSet := make(map[T]struct{}, len(subtract))
+	for _, item := range subtract {
+		subtractSet[item] = struct{}{}
+	}
 
 	for _, b := range base {
-		if !ExistInSlice(b, subtract) {
+		if _, ok := subtractSet[b]; !ok {
 			result = append(result, b)
 		}
 	}

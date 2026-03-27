@@ -5,14 +5,12 @@ import (
 	"sync"
 )
 
-// @todo remove after https://github.com/golang/go/issues/20135
-const ShrinkThreshold = 200 // the number is arbitrary chosen
+const ShrinkThreshold = 200
 
 // Store defines a concurrent safe in memory key-value data store.
 type Store[K comparable, T any] struct {
-	data    map[K]T
-	mu      sync.RWMutex
-	deleted int64
+	data map[K]T
+	mu   sync.RWMutex
 }
 
 // New creates a new Store[T] instance with a shallow copy of the provided data (if any).
@@ -38,8 +36,6 @@ func (s *Store[K, T]) Reset(newData map[K]T) {
 	} else {
 		s.data = make(map[K]T)
 	}
-
-	s.deleted = 0
 }
 
 // Length returns the current number of elements in the store.
@@ -63,19 +59,6 @@ func (s *Store[K, T]) Remove(key K) {
 	defer s.mu.Unlock()
 
 	delete(s.data, key)
-	s.deleted++
-
-	// reassign to a new map so that the old one can be gc-ed because it doesn't shrink
-	//
-	// @todo remove after https://github.com/golang/go/issues/20135
-	if s.deleted >= ShrinkThreshold {
-		newData := make(map[K]T, len(s.data))
-		for k, v := range s.data {
-			newData[k] = v
-		}
-		s.data = newData
-		s.deleted = 0
-	}
 }
 
 // Has checks if element with the specified key exist or not.
@@ -134,6 +117,20 @@ func (s *Store[K, T]) Values() []T {
 	}
 
 	return values
+}
+
+// Range iterates over the current store entries under a read lock.
+//
+// Returning false from fn stops the iteration early.
+func (s *Store[K, T]) Range(fn func(key K, value T) bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for k, v := range s.data {
+		if !fn(k, v) {
+			return
+		}
+	}
 }
 
 // Set sets (or overwrite if already exists) a new value for key.
@@ -253,5 +250,8 @@ func (s *Store[K, T]) UnmarshalJSON(data []byte) error {
 // MarshalJSON implements [json.Marshaler] and export the current
 // store data into valid JSON.
 func (s *Store[K, T]) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.GetAll())
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return json.Marshal(s.data)
 }

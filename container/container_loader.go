@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/lumm2509/keel/config"
@@ -31,6 +32,8 @@ type BaseContainer[Cradle any] struct {
 	subscriptionsBroker *subscriptions.Broker
 	logger              *slog.Logger
 	dbConnect           func() (*sql.DB, error)
+	trustedProxyRanges  []netip.Prefix
+	trustedProxyOnce    sync.Once
 }
 
 func LoadBasecontainer[C any](config *config.ConfigModule, cradle ...*C) *BaseContainer[C] {
@@ -227,17 +230,21 @@ func (b *BaseContainer[Cradle]) connectDataDB() (*sql.DB, error) {
 }
 
 func (b *BaseContainer[Cradle]) TrustedProxyRanges() []netip.Prefix {
-	if b.config == nil || b.config.Projectconfig.Http == nil {
-		return nil
-	}
-
-	result := make([]netip.Prefix, 0, len(b.config.Projectconfig.Http.TrustedProxyCIDRs))
-	for _, raw := range b.config.Projectconfig.Http.TrustedProxyCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err == nil {
-			result = append(result, prefix)
+	b.trustedProxyOnce.Do(func() {
+		if b.config == nil || b.config.Projectconfig.Http == nil {
+			return
 		}
-	}
 
-	return result
+		ranges := make([]netip.Prefix, 0, len(b.config.Projectconfig.Http.TrustedProxyCIDRs))
+		for _, raw := range b.config.Projectconfig.Http.TrustedProxyCIDRs {
+			prefix, err := netip.ParsePrefix(raw)
+			if err == nil {
+				ranges = append(ranges, prefix)
+			}
+		}
+
+		b.trustedProxyRanges = ranges
+	})
+
+	return append([]netip.Prefix(nil), b.trustedProxyRanges...)
 }

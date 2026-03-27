@@ -3,6 +3,7 @@ package subscriptions
 import (
 	"encoding/json"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 
@@ -82,6 +83,10 @@ var _ Client = (*DefaultClient)(nil)
 type DefaultClient struct {
 	store         map[string]any
 	subscriptions map[string]SubscriptionOptions
+	topics        map[string]string
+	topicSubs     map[string]map[string]SubscriptionOptions
+	sortedTopics  []string
+	topicsDirty   bool
 	channel       chan Message
 	id            string
 	mu            sync.RWMutex
@@ -95,6 +100,8 @@ func NewDefaultClient() *DefaultClient {
 		store:         map[string]any{},
 		channel:       make(chan Message),
 		subscriptions: map[string]SubscriptionOptions{},
+		topics:        map[string]string{},
+		topicSubs:     map[string]map[string]SubscriptionOptions{},
 	}
 }
 
@@ -134,13 +141,12 @@ func (c *DefaultClient) Subscriptions(prefixes ...string) map[string]Subscriptio
 	}
 
 	result := make(map[string]SubscriptionOptions)
+	topics := c.sortedTopicsSnapshot()
 
 	for _, prefix := range prefixes {
-		for s, options := range c.subscriptions {
-			// "?" ensures that the options query start character is always there
-			// so that it can be used as an end separator when looking only for the main subscription topic
-			if strings.HasPrefix(s+"?", prefix) {
-				result[s] = options
+		for _, topic := range matchingTopics(topics, prefix) {
+			for sub, options := range c.topicSubs[topic] {
+				result[sub] = options
 			}
 		}
 	}
@@ -152,46 +158,39 @@ func (c *DefaultClient) Subscriptions(prefixes ...string) map[string]Subscriptio
 //
 // Empty subscriptions (aka. "") are ignored.
 func (c *DefaultClient) Subscribe(subs ...string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	type parsedSubscription struct {
+		raw     string
+		topic   string
+		options SubscriptionOptions
+	}
+
+	parsed := make([]parsedSubscription, 0, len(subs))
 
 	for _, s := range subs {
 		if s == "" {
 			continue // skip empty
 		}
 
-		// extract subscription options (if any)
-		rawOptions := struct {
-			// note: any instead of string to minimize the breaking changes with earlier versions
-			Query   map[string]any `json:"query"`
-			Headers map[string]any `json:"headers"`
-		}{}
-		u, err := url.Parse(s)
-		if err == nil {
-			raw := u.Query().Get(optionsParam)
-			if raw != "" {
-				json.Unmarshal([]byte(raw), &rawOptions)
-			}
+		topic, options := parseSubscription(s)
+		parsed = append(parsed, parsedSubscription{
+			raw:     s,
+			topic:   topic,
+			options: options,
+		})
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, sub := range parsed {
+		oldTopic, existed := c.topics[sub.raw]
+		if existed && oldTopic != sub.topic {
+			c.removeTopicSubscription(oldTopic, sub.raw)
 		}
 
-		options := SubscriptionOptions{
-			Query:   make(map[string]string, len(rawOptions.Query)),
-			Headers: make(map[string]string, len(rawOptions.Headers)),
-		}
-
-		// normalize query
-		// (currently only single string values are supported for consistency with the default routes handling)
-		for k, v := range rawOptions.Query {
-			options.Query[k] = cast.ToString(v)
-		}
-
-		// normalize headers name and values, eg. "X-Token" is converted to "x_token"
-		// (currently only single string values are supported for consistency with the default routes handling)
-		for k, v := range rawOptions.Headers {
-			options.Headers[inflector.Snakecase(k)] = cast.ToString(v)
-		}
-
-		c.subscriptions[s] = options
+		c.subscriptions[sub.raw] = sub.options
+		c.topics[sub.raw] = sub.topic
+		c.addTopicSubscription(sub.topic, sub.raw, sub.options)
 	}
 }
 
@@ -204,12 +203,16 @@ func (c *DefaultClient) Unsubscribe(subs ...string) {
 
 	if len(subs) > 0 {
 		for _, s := range subs {
+			c.removeTopicSubscription(c.topics[s], s)
 			delete(c.subscriptions, s)
+			delete(c.topics, s)
 		}
 	} else {
 		// unsubscribe all
 		for s := range c.subscriptions {
+			c.removeTopicSubscription(c.topics[s], s)
 			delete(c.subscriptions, s)
+			delete(c.topics, s)
 		}
 	}
 }
@@ -272,14 +275,108 @@ func (c *DefaultClient) IsDiscarded() bool {
 
 // Send sends the specified message to the client's channel (if not discarded).
 func (c *DefaultClient) Send(m Message) {
-	if c.IsDiscarded() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.isDiscarded {
 		return
 	}
 
-	// "gracefully" handle panics since channel close is not blocking and could cause races
-	defer func() {
-		recover()
-	}()
-
 	c.channel <- m
+}
+
+func parseSubscription(rawSub string) (string, SubscriptionOptions) {
+	rawOptions := struct {
+		// note: any instead of string to minimize the breaking changes with earlier versions
+		Query   map[string]any `json:"query"`
+		Headers map[string]any `json:"headers"`
+	}{}
+
+	topic := rawSub
+	if u, err := url.Parse(rawSub); err == nil {
+		topic = u.Path
+		if topic == "" {
+			topic = rawSub
+		}
+
+		raw := u.Query().Get(optionsParam)
+		if raw != "" {
+			_ = json.Unmarshal([]byte(raw), &rawOptions)
+		}
+	}
+
+	options := SubscriptionOptions{
+		Query:   make(map[string]string, len(rawOptions.Query)),
+		Headers: make(map[string]string, len(rawOptions.Headers)),
+	}
+
+	// normalize query
+	// (currently only single string values are supported for consistency with the default routes handling)
+	for k, v := range rawOptions.Query {
+		options.Query[k] = cast.ToString(v)
+	}
+
+	// normalize headers name and values, eg. "X-Token" is converted to "x_token"
+	// (currently only single string values are supported for consistency with the default routes handling)
+	for k, v := range rawOptions.Headers {
+		options.Headers[inflector.Snakecase(k)] = cast.ToString(v)
+	}
+
+	return topic, options
+}
+
+func (c *DefaultClient) addTopicSubscription(topic string, raw string, options SubscriptionOptions) {
+	if _, ok := c.topicSubs[topic]; !ok {
+		c.topicSubs[topic] = map[string]SubscriptionOptions{}
+		c.topicsDirty = true
+	}
+
+	c.topicSubs[topic][raw] = options
+}
+
+func (c *DefaultClient) removeTopicSubscription(topic string, raw string) {
+	if topic == "" {
+		return
+	}
+
+	subs, ok := c.topicSubs[topic]
+	if !ok {
+		return
+	}
+
+	delete(subs, raw)
+	if len(subs) == 0 {
+		delete(c.topicSubs, topic)
+		c.topicsDirty = true
+	}
+}
+
+func (c *DefaultClient) sortedTopicsSnapshot() []string {
+	if c.topicsDirty {
+		c.sortedTopics = c.sortedTopics[:0]
+		for topic := range c.topicSubs {
+			c.sortedTopics = append(c.sortedTopics, topic)
+		}
+		sort.Strings(c.sortedTopics)
+		c.topicsDirty = false
+	}
+
+	return c.sortedTopics
+}
+
+func matchingTopics(topics []string, prefix string) []string {
+	if prefix == "" {
+		return topics
+	}
+
+	start := sort.Search(len(topics), func(i int) bool {
+		return topics[i] >= prefix
+	})
+
+	end := start
+	for end < len(topics) && strings.HasPrefix(topics[end], prefix) {
+		end++
+	}
+
+	return topics[start:end]
 }

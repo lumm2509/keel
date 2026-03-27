@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/lumm2509/keel/infra/store"
-	"github.com/lumm2509/keel/pkg/list"
 )
 
 // Broker defines a struct for managing subscriptions clients.
@@ -27,7 +26,28 @@ func (b *Broker) Clients() map[string]Client {
 
 // ChunkedClients splits the current clients into a chunked slice.
 func (b *Broker) ChunkedClients(chunkSize int) [][]Client {
-	return list.ToChunks(b.store.Values(), chunkSize)
+	if chunkSize <= 0 {
+		chunkSize = 1
+	}
+
+	chunks := make([][]Client, 0)
+	current := make([]Client, 0, chunkSize)
+
+	b.store.Range(func(_ string, client Client) bool {
+		current = append(current, client)
+		if len(current) == chunkSize {
+			chunks = append(chunks, current)
+			current = make([]Client, 0, chunkSize)
+		}
+
+		return true
+	})
+
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+
+	return chunks
 }
 
 // TotalClients returns the total number of registered clients.
