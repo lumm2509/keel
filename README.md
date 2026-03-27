@@ -1,155 +1,110 @@
 <p align="center">
-    <a href="https://pocketbase.io" target="_blank" rel="noopener">
-        <img src="https://i.imgur.com/5qimnm5.png" alt="PocketBase - open source backend in 1 file" />
+    <a href="https://github.com/lumm2509/keel" target="_blank" rel="noopener">
+        <img src=".github/gopher-keel.png" alt="keel - backend runtime for Go" />
     </a>
 </p>
 
-<p align="center">
-    <a href="https://github.com/pocketbase/pocketbase/actions/workflows/release.yaml" target="_blank" rel="noopener"><img src="https://github.com/pocketbase/pocketbase/actions/workflows/release.yaml/badge.svg" alt="build" /></a>
-    <a href="https://github.com/pocketbase/pocketbase/releases" target="_blank" rel="noopener"><img src="https://img.shields.io/github/release/pocketbase/pocketbase.svg" alt="Latest releases" /></a>
-    <a href="https://pkg.go.dev/github.com/pocketbase/pocketbase" target="_blank" rel="noopener"><img src="https://godoc.org/github.com/pocketbase/pocketbase?status.svg" alt="Go package documentation" /></a>
-</p>
+# keel
 
-[PocketBase](https://pocketbase.io) is an open source Go backend that includes:
+An embeddable backend something for Go.
 
-- embedded database (_SQLite_) with **realtime subscriptions**
-- built-in **files and users management**
-- convenient **Admin dashboard UI**
-- and simple **REST-ish API**
+## what this is
 
-**For documentation and examples, please visit https://pocketbase.io/docs.**
+- A library that wires together the parts every backend ends up needing: config, storage, jobs, logging, lifecycle, etc.
+- Built around a central `App` with a defined lifecycle (`bootstrap → serve → shutdown`)
+- Hook-based: extend behavior without rewriting the core
+- Importable as a library — not a CLI, not a code generator
 
-> [!WARNING]
-> Please keep in mind that PocketBase is still under active development
-> and therefore full backward compatibility is not guaranteed before reaching v1.0.0.
+## why it exists
 
-## API SDK clients
+Because most Go backends start the same way:
 
-The easiest way to interact with the PocketBase Web APIs is to use one of the official SDK clients:
+- set up a server
+- pick a router
+- load config
+- connect a database
+- add logging
+- bolt on jobs/cron
+- figure out auth (again)
 
-- **JavaScript - [pocketbase/js-sdk](https://github.com/pocketbase/js-sdk)** (_Browser, Node.js, React Native_)
-- **Dart - [pocketbase/dart-sdk](https://github.com/pocketbase/dart-sdk)** (_Web, Mobile, Desktop, CLI_)
+None of that is hard, but it’s repetitive and easy to get slightly wrong every time.
 
-You could also check the recommendations in https://pocketbase.io/docs/how-to-use/.
+keel is an attempt to make that part a solved problem.
 
+## origin
 
-## Overview
+This started as “slightly modify PocketBase for a specific use case”.
 
-### Use as standalone app
+That stopped being true fairly quickly.
 
-You could download the prebuilt executable for your platform from the [Releases page](https://github.com/pocketbase/pocketbase/releases).
-Once downloaded, extract the archive and run `./pocketbase serve` in the extracted directory.
+## how it works
 
-The prebuilt executables are based on the [`examples/base/main.go` file](https://github.com/pocketbase/pocketbase/blob/master/examples/base/main.go) and comes with the JS VM plugin enabled by default which allows to extend PocketBase with JavaScript (_for more details please refer to [Extend with JavaScript](https://pocketbase.io/docs/js-overview/)_).
+You create an `App`, register hooks, and let the runtime handle the rest.
 
-### Use as a Go framework/toolkit
+```go
+cfg := &config.ConfigModule{
+    // your config here
+}
 
-PocketBase is distributed as a regular Go library package which allows you to build
-your own custom app specific business logic and still have a single portable executable at the end.
+a := app.New(cfg)
 
-Here is a minimal example:
+a.OnServe().Add(func(e *app.ServeEvent[any]) error {
+    return nil
+})
 
-0. [Install Go 1.25+](https://go.dev/doc/install) (_if you haven't already_)
+if err := a.Bootstrap(); err != nil {
+    panic(err)
+}
+````
 
-1. Create a new project directory with the following `main.go` file inside it:
-    ```go
-    package main
+The important part is not the API surface — it’s that the wiring is already done.
 
-    import (
-        "log"
+## design notes
 
-        "github.com/pocketbase/pocketbase"
-        "github.com/pocketbase/pocketbase/core"
-    )
+**Lifecycle is explicit.**
+There is a clear order of execution: bootstrap, serve, shutdown. Hooks attach to those phases. No hidden background behavior.
 
-    func main() {
-        app := pocketbase.New()
+**The App is the boundary.**
+Everything hangs off `App`. It acts as both container and runtime. Not particularly novel, but it keeps things predictable.
 
-        app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-            // registers new "GET /hello" route
-            se.Router.GET("/hello", func(re *core.RequestEvent) error {
-                return re.String(200, "Hello world!")
-            })
+**Hooks over inheritance.**
+Behavior is extended by registering functions against lifecycle events. No subclassing, no deep hierarchies.
 
-            return se.Next()
-        })
+**Structure over enforcement.**
+Packages are importable. There’s no `internal/` barrier. Boundaries are implied by layout and usage, not forced by the compiler.
 
-        if err := app.Start(); err != nil {
-            log.Fatal(err)
-        }
-    }
-    ```
+**Opinionated, but escapable.**
+There is a “default way” to do things, but you can bypass it if needed. If you can’t, that’s likely a mistake.
 
-2. To init the dependencies, run `go mod init myapp && go mod tidy`.
+## what it is NOT
 
-3. To start the application, run `go run main.go serve`.
+* Not a full framework in the Rails/Django sense
+* Not a replacement for your entire stack
+* Not a generator or scaffolding tool
+* Not stable — APIs will change
 
-4. To build a statically linked executable, you can run `CGO_ENABLED=0 go build` and then start the created executable with `./myapp serve`.
+## status
 
-_For more details please refer to [Extend with Go](https://pocketbase.io/docs/go-overview/)._
+Work in progress.
 
-### Building and running the repo main.go example
+* Core pieces are in place
+* `core/` is being dismantled and redistributed
+* Naming and boundaries are still settling
+* Some parts are solid, others are in flux
 
-To build the minimal standalone executable, like the prebuilt ones in the releases page, you can simply run `go build` inside the `examples/base` directory:
+Expect breakage.
 
-0. [Install Go 1.25+](https://go.dev/doc/install) (_if you haven't already_)
-1. Clone/download the repo
-2. Navigate to `examples/base`
-3. Run `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`
-   (_https://go.dev/doc/install/source#environment_)
-4. Start the created executable by running `./base serve`.
+## roadmap (loosely)
 
-Note that the supported build targets by the pure Go SQLite driver at the moment are:
+* stabilize the `App` surface
+* make plugins first-class
+* clean up dependency direction
+* remove remaining `core/` coupling
 
-```
-darwin  amd64
-darwin  arm64
-freebsd amd64
-freebsd arm64
-linux   386
-linux   amd64
-linux   arm
-linux   arm64
-linux   loong64
-linux   ppc64le
-linux   riscv64
-linux   s390x
-windows 386
-windows amd64
-windows arm64
-```
+## final note
 
-### Testing
+This project is mostly a response to repetition.
 
-PocketBase comes with mixed bag of unit and integration tests.
-To run them, use the standard `go test` command:
+If you enjoy wiring the same backend from scratch every time, this probably won’t be interesting.
 
-```sh
-go test ./...
-```
-
-Check also the [Testing guide](http://pocketbase.io/docs/testing) to learn how to write your own custom application tests.
-
-## Security
-
-If you discover a security vulnerability within PocketBase, please send an e-mail to **support at pocketbase.io**.
-
-All reports will be promptly addressed and you'll be credited in the fix release notes.
-
-## Contributing
-
-PocketBase is free and open source project licensed under the [MIT License](LICENSE.md).
-You are free to do whatever you want with it, even offering it as a paid service.
-
-You could help continuing its development by:
-
-- [Contribute to the source code](CONTRIBUTING.md)
-- [Suggest new features and report issues](https://github.com/pocketbase/pocketbase/issues)
-
-PRs for new OAuth2 providers, bug fixes, code optimizations and documentation improvements are more than welcome.
-
-But please refrain creating PRs for _new features_ without previously discussing the implementation details.
-PocketBase has a [roadmap](https://github.com/orgs/pocketbase/projects/2) and I try to work on issues in specific order and such PRs often come in out of nowhere and skew all initial planning with tedious back-and-forth communication.
-
-Don't get upset if I close your PR, even if it is well executed and tested. This doesn't mean that it will never be merged.
-Later we can always refer to it and/or take pieces of your implementation when the time comes to work on the issue (don't worry you'll be credited in the release notes).
+If you don’t, it might be.
