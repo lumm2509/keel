@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"github.com/lumm2509/keel/config"
@@ -223,4 +224,20 @@ func (b *BaseContainer[Cradle]) connectDataDB() (*sql.DB, error) {
 	}
 
 	return database.Open(options)
+}
+
+func (b *BaseContainer[Cradle]) TrustedProxyRanges() []netip.Prefix {
+	if b.config == nil || b.config.Projectconfig.Http == nil {
+		return nil
+	}
+
+	result := make([]netip.Prefix, 0, len(b.config.Projectconfig.Http.TrustedProxyCIDRs))
+	for _, raw := range b.config.Projectconfig.Http.TrustedProxyCIDRs {
+		prefix, err := netip.ParsePrefix(raw)
+		if err == nil {
+			result = append(result, prefix)
+		}
+	}
+
+	return result
 }

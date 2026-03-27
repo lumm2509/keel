@@ -79,7 +79,10 @@ func (e *RequestEvent[Cradle]) WithLogAttrs(args ...any) *slog.Logger {
 }
 
 func (e *RequestEvent[Cradle]) ClientIP() string {
-	return e.RealIP()
+	if provider, ok := any(e.Container).(TrustedProxyProvider); ok {
+		return e.RealIPFromTrustedProxies(provider.TrustedProxyRanges())
+	}
+	return e.RemoteIP()
 }
 
 func (e *RequestEvent[Cradle]) RoutePattern() string {

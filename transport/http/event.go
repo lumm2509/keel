@@ -102,10 +102,33 @@ func (e *Event) RemoteIP() string {
 	return parsed.StringExpanded()
 }
 
-// RealIP returns the best-effort client IP address, accounting for common proxy headers.
+// RealIP returns the client IP without trusting proxy headers.
 func (e *Event) RealIP() string {
+	return e.RealIPFromTrustedProxies(nil)
+}
+
+// RealIPFromTrustedProxies resolves the client IP using proxy headers only when
+// the direct peer is in one of the trusted proxy ranges.
+func (e *Event) RealIPFromTrustedProxies(trusted []netip.Prefix) string {
 	if e.Request == nil {
 		return ""
+	}
+
+	remote := e.RemoteIP()
+	parsedRemote, err := netip.ParseAddr(strings.TrimSpace(remote))
+	if err != nil {
+		return remote
+	}
+
+	var trustedProxy bool
+	for _, prefix := range trusted {
+		if prefix.Contains(parsedRemote) {
+			trustedProxy = true
+			break
+		}
+	}
+	if !trustedProxy {
+		return remote
 	}
 
 	if forwarded := e.Request.Header.Get("Forwarded"); forwarded != "" {
@@ -142,7 +165,7 @@ func (e *Event) RealIP() string {
 		}
 	}
 
-	return e.RemoteIP()
+	return remote
 }
 
 // FindUploadedFiles extracts all form files of "key" from a http request

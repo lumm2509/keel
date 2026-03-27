@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -216,6 +217,36 @@ func TestEventRemoteIP(t *testing.T) {
 				t.Fatalf("Expected IP %q, got %q", s.expected, ip)
 			}
 		})
+	}
+}
+
+func TestEventRealIPDoesNotTrustHeadersByDefault(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	req.Header.Set("X-Real-IP", "203.0.113.11")
+
+	event := router.Event{Request: req}
+
+	if got := event.RealIP(); got != "10.0.0.5" {
+		t.Fatalf("expected remote IP when no trusted proxies are configured, got %q", got)
+	}
+}
+
+func TestEventRealIPFromTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 10.0.0.5")
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
+	if got := event.RealIPFromTrustedProxies(trusted); got != "203.0.113.10" {
+		t.Fatalf("expected forwarded IP from trusted proxy, got %q", got)
 	}
 }
 

@@ -96,6 +96,7 @@ func TestDefaultObservabilityCapturesRequestContext(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
 	req.Header.Set(requestIDHeader, "req-123")
 	req.Header.Set("X-Forwarded-For", "203.0.113.10")
 	res := httptest.NewRecorder()
@@ -178,8 +179,12 @@ func TestDefaultObservabilityRecoversPanics(t *testing.T) {
 
 func newTestConfig(logger *slog.Logger) *config.ConfigModule {
 	return &config.ConfigModule{
-		Projectconfig: config.ProjectConfigOptions{},
-		Logger:        logger,
+		Projectconfig: config.ProjectConfigOptions{
+			Http: &config.HttpConfigOptions{
+				TrustedProxyCIDRs: []string{"10.0.0.0/8"},
+			},
+		},
+		Logger: logger,
 	}
 }
 
