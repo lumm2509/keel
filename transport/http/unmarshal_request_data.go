@@ -7,13 +7,27 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"sync"
 )
 
 var textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+var requestDataStructMetaCache sync.Map
 
 // JSONPayloadKey is the key for the special UnmarshalRequestData case
 // used for reading serialized json payload without normalization.
 const JSONPayloadKey string = "@jsonPayload"
+
+type requestDataStructMetaKey struct {
+	t   reflect.Type
+	tag string
+}
+
+type requestDataFieldMeta struct {
+	index   []int
+	name    string
+	isText  bool
+	isSlice bool
+}
 
 // UnmarshalRequestData unmarshals url.Values type of data (query, multipart/form-data, etc.) into dst.
 //
@@ -57,6 +71,18 @@ func UnmarshalRequestData(data map[string][]string, dst any, structTagKey string
 		return nil // nothing to unmarshal
 	}
 
+	jsonPayloadValues := data[JSONPayloadKey]
+	if len(jsonPayloadValues) > 0 && len(data) == 1 {
+		return unmarshalRequestJSONPayloads(jsonPayloadValues, dst)
+	}
+
+	if len(jsonPayloadValues) > 0 && isJSONPayloadOnly(data) {
+		if err := unmarshalRequestJSONPayloads(jsonPayloadValues, dst); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	dstValue := reflect.ValueOf(dst)
 	if dstValue.Kind() != reflect.Pointer {
 		return errors.New("dst must be a pointer")
@@ -95,7 +121,12 @@ func UnmarshalRequestData(data map[string][]string, dst any, structTagKey string
 			structTagKey = "form"
 		}
 
-		err := unmarshalInStructValue(data, dstValue, structTagKey, structPrefix)
+		metas := getRequestDataStructMeta(dstValue.Type(), structTagKey)
+		if len(jsonPayloadValues) > 0 && !hasMatchingRequestDataFields(data, metas, structPrefix) {
+			return unmarshalRequestJSONPayloads(jsonPayloadValues, dst)
+		}
+
+		err := unmarshalInStructValue(data, dstValue, metas, structPrefix)
 		if err != nil {
 			return err
 		}
@@ -108,7 +139,6 @@ func UnmarshalRequestData(data map[string][]string, dst any, structTagKey string
 	// Special case to scan serialized json string without
 	// normalization alongside the other data values
 	// ---------------------------------------------------------------
-	jsonPayloadValues := data[JSONPayloadKey]
 	for _, payload := range jsonPayloadValues {
 		if err := json.Unmarshal([]byte(payload), dst); err != nil {
 			return err
@@ -122,49 +152,27 @@ func UnmarshalRequestData(data map[string][]string, dst any, structTagKey string
 func unmarshalInStructValue(
 	data map[string][]string,
 	dstStructValue reflect.Value,
-	structTagKey string,
+	metas []requestDataFieldMeta,
 	structPrefix string,
 ) error {
-	dstStructType := dstStructValue.Type()
-
-	for i := 0; i < dstStructValue.NumField(); i++ {
-		fieldType := dstStructType.Field(i)
-
-		tag := fieldType.Tag.Get(structTagKey)
-
-		if tag == "-" || (!fieldType.Anonymous && !fieldType.IsExported()) {
-			continue // disabled or unexported non-anonymous struct field
-		}
-
-		fieldValue := dereference(dstStructValue.Field(i))
-
-		ft := fieldType.Type
-		if ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
-		}
-
-		isSlice := ft.Kind() == reflect.Slice
-		if isSlice {
-			ft = ft.Elem()
-		}
-
-		name := tag
-		if name == "" && !fieldType.Anonymous {
-			name = fieldType.Name
-		}
+	for _, meta := range metas {
+		name := meta.name
 		if name != "" && structPrefix != "" {
 			name = structPrefix + "." + name
 		}
 
-		// (*)encoding.TextUnmarshaler field
-		// ---
-		if ft.Implements(textUnmarshalerType) || reflect.PointerTo(ft).Implements(textUnmarshalerType) {
-			values, ok := data[name]
-			if !ok || len(values) == 0 || !fieldValue.CanSet() {
-				continue // no value to load or the field cannot be set
-			}
+		values, ok := data[name]
+		if !ok || len(values) == 0 {
+			continue
+		}
 
-			if isSlice {
+		fieldValue := dereferenceFieldByIndex(dstStructValue, meta.index)
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		if meta.isText {
+			if meta.isSlice {
 				n := len(values)
 				slice := reflect.MakeSlice(fieldValue.Type(), n, n)
 				for i, v := range values {
@@ -187,52 +195,154 @@ func unmarshalInStructValue(
 			continue
 		}
 
-		// "regular" field
-		// ---
-		if ft.Kind() != reflect.Struct {
-			values, ok := data[name]
-			if !ok || len(values) == 0 || !fieldValue.CanSet() {
-				continue // no value to load
-			}
-
-			if isSlice {
-				n := len(values)
-				slice := reflect.MakeSlice(fieldValue.Type(), n, n)
-				for i, v := range values {
-					if err := setRegularReflectedValue(dereference(slice.Index(i)), v); err != nil {
-						return err
-					}
-				}
-				fieldValue.Set(slice)
-			} else {
-				if err := setRegularReflectedValue(fieldValue, values[0]); err != nil {
+		if meta.isSlice {
+			n := len(values)
+			slice := reflect.MakeSlice(fieldValue.Type(), n, n)
+			for i, v := range values {
+				if err := setRegularReflectedValue(dereference(slice.Index(i)), v); err != nil {
 					return err
 				}
 			}
-			continue
-		}
-
-		// structs (embedded or nested)
-		// ---
-		// slice of structs
-		if isSlice {
-			// populating slice of structs is not supported at the moment
-			// because the filling rules are ambiguous
-			continue
-		}
-
-		if tag != "" {
-			structPrefix = tag
+			fieldValue.Set(slice)
 		} else {
-			structPrefix = name // name is empty for anonymous structs -> no prefix
+			if err := setRegularReflectedValue(fieldValue, values[0]); err != nil {
+				return err
+			}
 		}
+	}
 
-		if err := unmarshalInStructValue(data, fieldValue, structTagKey, structPrefix); err != nil {
+	return nil
+}
+
+func isJSONPayloadOnly(data map[string][]string) bool {
+	if len(data) != 1 {
+		return false
+	}
+
+	values, ok := data[JSONPayloadKey]
+	return ok && len(values) > 0
+}
+
+func unmarshalRequestJSONPayloads(payloads []string, dst any) error {
+	for _, payload := range payloads {
+		if err := json.Unmarshal([]byte(payload), dst); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func hasMatchingRequestDataFields(data map[string][]string, metas []requestDataFieldMeta, structPrefix string) bool {
+	if len(data) == 0 || len(metas) == 0 {
+		return false
+	}
+
+	for _, meta := range metas {
+		name := meta.name
+		if name != "" && structPrefix != "" {
+			name = structPrefix + "." + name
+		}
+
+		if name == "" || name == JSONPayloadKey {
+			continue
+		}
+
+		if values, ok := data[name]; ok && len(values) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func getRequestDataStructMeta(t reflect.Type, structTagKey string) []requestDataFieldMeta {
+	key := requestDataStructMetaKey{t: t, tag: structTagKey}
+	if cached, ok := requestDataStructMetaCache.Load(key); ok {
+		return cached.([]requestDataFieldMeta)
+	}
+
+	fields := buildRequestDataStructMeta(t, structTagKey, nil, "")
+	cached, _ := requestDataStructMetaCache.LoadOrStore(key, fields)
+	return cached.([]requestDataFieldMeta)
+}
+
+func buildRequestDataStructMeta(t reflect.Type, structTagKey string, indexPrefix []int, namePrefix string) []requestDataFieldMeta {
+	fields := make([]requestDataFieldMeta, 0, t.NumField())
+
+	for i := 0; i < t.NumField(); i++ {
+		fieldType := t.Field(i)
+		tag := fieldType.Tag.Get(structTagKey)
+
+		if tag == "-" || (!fieldType.Anonymous && !fieldType.IsExported()) {
+			continue
+		}
+
+		fieldIndex := append(append([]int(nil), indexPrefix...), i)
+
+		ft := fieldType.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+
+		isSlice := ft.Kind() == reflect.Slice
+		if isSlice {
+			ft = ft.Elem()
+		}
+
+		name := tag
+		if name == "" && !fieldType.Anonymous {
+			name = fieldType.Name
+		}
+		fullName := joinRequestDataFieldName(namePrefix, name)
+
+		isText := ft.Implements(textUnmarshalerType) || reflect.PointerTo(ft).Implements(textUnmarshalerType)
+		if isText || ft.Kind() != reflect.Struct {
+			fields = append(fields, requestDataFieldMeta{
+				index:   fieldIndex,
+				name:    fullName,
+				isText:  isText,
+				isSlice: isSlice,
+			})
+			continue
+		}
+
+		if isSlice {
+			continue
+		}
+
+		childPrefix := name
+		if tag != "" {
+			childPrefix = tag
+		}
+
+		fields = append(fields, buildRequestDataStructMeta(ft, structTagKey, fieldIndex, joinRequestDataFieldName(namePrefix, childPrefix))...)
+	}
+
+	return fields
+}
+
+func joinRequestDataFieldName(prefix string, name string) string {
+	if prefix == "" {
+		return name
+	}
+	if name == "" {
+		return prefix
+	}
+
+	return prefix + "." + name
+}
+
+func dereferenceFieldByIndex(v reflect.Value, index []int) reflect.Value {
+	current := v
+	for _, i := range index {
+		if current.Kind() == reflect.Ptr {
+			current = dereference(current)
+		}
+		current = current.Field(i)
+	}
+
+	return dereference(current)
 }
 
 // dereference returns the underlying value v points to.

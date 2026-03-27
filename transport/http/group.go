@@ -48,7 +48,7 @@ func (group *RouterGroup[T]) Group(prefix string) *RouterGroup[T] {
 // or middleware with custom exec prirority, use [RouterGroup.Bind] method.
 func (group *RouterGroup[T]) BindFunc(middlewareFuncs ...func(e T) error) *RouterGroup[T] {
 	for _, m := range middlewareFuncs {
-		group.Middlewares = append(group.Middlewares, &hook.Handler[T]{Func: m})
+		group.Middlewares = appendSortedHandlers(group.Middlewares, &hook.Handler[T]{Func: m})
 	}
 
 	return group
@@ -56,7 +56,7 @@ func (group *RouterGroup[T]) BindFunc(middlewareFuncs ...func(e T) error) *Route
 
 // Bind registers one or multiple middleware handlers to the current group.
 func (group *RouterGroup[T]) Bind(middlewares ...*hook.Handler[T]) *RouterGroup[T] {
-	group.Middlewares = append(group.Middlewares, middlewares...)
+	group.Middlewares = appendSortedHandlers(group.Middlewares, middlewares...)
 
 	// unmark the newly added middlewares in case they were previously "excluded"
 	if group.excludedMiddlewares != nil {

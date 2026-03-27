@@ -76,74 +76,53 @@ func (r *Router[T]) BuildMux() (http.Handler, error) {
 
 	mux := http.NewServeMux()
 
-	if err := r.loadMux(mux, r.RouterGroup, nil); err != nil {
+	if err := r.loadMux(mux, r.RouterGroup, routeBuildState[T]{}); err != nil {
 		return nil, err
 	}
 
 	return mux, nil
 }
 
-func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents []*RouterGroup[T]) error {
+type routeBuildState[T hook.Resolver] struct {
+	prefix      string
+	middlewares []*hook.Handler[T]
+}
+
+func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state routeBuildState[T]) error {
+	nextState := routeBuildState[T]{
+		prefix:      state.prefix + group.Prefix,
+		middlewares: mergeIncludedHandlers(state.middlewares, group.excludedMiddlewares, group.Middlewares, group.excludedMiddlewares),
+	}
+
 	for _, child := range group.children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
-			if err := r.loadMux(mux, v, append(parents, group)); err != nil {
+			if err := r.loadMux(mux, v, nextState); err != nil {
 				return err
 			}
 		case *Route[T]:
+			routeHandlers := mergeIncludedHandlers(nextState.middlewares, v.excludedMiddlewares, v.Middlewares, v.excludedMiddlewares)
 			routeHook := &hook.Hook[T]{}
+			routeHook.SetSortedHandlers(routeHandlers)
 
-			var pattern string
-
+			routePattern := nextState.prefix + v.Path
 			if v.Method != "" {
-				pattern = v.Method + " "
+				routePattern = v.Method + " " + routePattern
 			}
 
-			// add parent groups middlewares
-			for _, p := range parents {
-				pattern += p.Prefix
-				for _, h := range p.Middlewares {
-					if _, ok := p.excludedMiddlewares[h.Id]; !ok {
-						if _, ok = group.excludedMiddlewares[h.Id]; !ok {
-							if _, ok = v.excludedMiddlewares[h.Id]; !ok {
-								routeHook.Bind(h)
-							}
-						}
-					}
-				}
-			}
-
-			// add current groups middlewares
-			pattern += group.Prefix
-			for _, h := range group.Middlewares {
-				if _, ok := group.excludedMiddlewares[h.Id]; !ok {
-					if _, ok = v.excludedMiddlewares[h.Id]; !ok {
-						routeHook.Bind(h)
-					}
-				}
-			}
-
-			// add current route middlewares
-			pattern += v.Path
-			for _, h := range v.Middlewares {
-				if _, ok := v.excludedMiddlewares[h.Id]; !ok {
-					routeHook.Bind(h)
-				}
-			}
-
-			mux.HandleFunc(pattern, func(resp http.ResponseWriter, req *http.Request) {
+			mux.HandleFunc(routePattern, func(resp http.ResponseWriter, req *http.Request) {
 				// wrap the response to add write and status tracking
 				resp = &ResponseWriter{ResponseWriter: resp}
 
 				// wrap the request body to allow multiple reads
-				body := &RereadableReadCloser{ReadCloser: req.Body}
+				body := &RereadableReadCloser{ReadCloser: req.Body, Lazy: true}
 				defer body.Close()
 
 				req.Body = body
 
 				event, cleanupFunc := r.eventFactory(resp, req)
 				if setter, ok := any(event).(routePatternSetter); ok {
-					setter.SetRoutePattern(pattern)
+					setter.SetRoutePattern(routePattern)
 				}
 
 				// trigger the handler hook chain

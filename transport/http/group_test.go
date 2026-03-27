@@ -122,6 +122,31 @@ func TestRouterGroupBind(t *testing.T) {
 	}
 }
 
+func TestRouterGroupBindPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	g := RouterGroup[*Event]{}
+
+	g.Bind(
+		&hook.Handler[*Event]{Id: "late", Priority: 10},
+		&hook.Handler[*Event]{Id: "early", Priority: -10},
+		&hook.Handler[*Event]{Id: "mid1", Priority: 0},
+		&hook.Handler[*Event]{Id: "mid2", Priority: 0},
+	)
+
+	got := []string{
+		g.Middlewares[0].Id,
+		g.Middlewares[1].Id,
+		g.Middlewares[2].Id,
+		g.Middlewares[3].Id,
+	}
+
+	expected := []string{"early", "mid1", "mid2", "late"}
+	if !slices.Equal(got, expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+}
+
 func TestRouterGroupUnbind(t *testing.T) {
 	t.Parallel()
 

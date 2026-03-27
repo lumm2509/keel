@@ -15,6 +15,10 @@ type Rereader interface {
 	Reread()
 }
 
+type rereadEnabler interface {
+	EnableReread()
+}
+
 // RereadableReadCloser defines a wrapper around a [io.ReadCloser] reader
 // allowing to read the original reader multiple times.
 //
@@ -24,6 +28,8 @@ type RereadableReadCloser struct {
 
 	copy        io.ReadWriteCloser
 	closeErrors []error
+	enabled     bool
+	Lazy        bool
 
 	// MaxMemory specifies the max size of the in memory copy buffer
 	// before switching to read/write from temp disk file.
@@ -40,9 +46,10 @@ type RereadableReadCloser struct {
 // On EOF r is "rewinded" to allow reading multiple times.
 func (r *RereadableReadCloser) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
+	active := !r.Lazy || r.enabled
 
 	// copy the read bytes into the internal buffer
-	if n > 0 {
+	if active && n > 0 {
 		if r.copy == nil {
 			r.copy = newBufferWithFile(r.MaxMemory)
 		}
@@ -53,18 +60,22 @@ func (r *RereadableReadCloser) Read(p []byte) (int, error) {
 	}
 
 	// end reached -> reset for the next read
-	if err == io.EOF {
+	if active && err == io.EOF {
 		r.Reread()
 	}
 
 	return n, err
 }
 
+func (r *RereadableReadCloser) EnableReread() {
+	r.enabled = true
+}
+
 // Reread satisfies the [Rereader] interface and resets the r internal state to allow rereads.
 //
 // note: not named Reset to avoid conflicts with other reader interfaces.
 func (r *RereadableReadCloser) Reread() {
-	if r.copy == nil {
+	if (r.Lazy && !r.enabled) || r.copy == nil {
 		return // nothing to reset
 	}
 

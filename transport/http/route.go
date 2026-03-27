@@ -20,7 +20,7 @@ type Route[T hook.Resolver] struct {
 // or middleware with custom exec prirority, use the [Route.Bind] method.
 func (route *Route[T]) BindFunc(middlewareFuncs ...func(e T) error) *Route[T] {
 	for _, m := range middlewareFuncs {
-		route.Middlewares = append(route.Middlewares, &hook.Handler[T]{Func: m})
+		route.Middlewares = appendSortedHandlers(route.Middlewares, &hook.Handler[T]{Func: m})
 	}
 
 	return route
@@ -28,7 +28,7 @@ func (route *Route[T]) BindFunc(middlewareFuncs ...func(e T) error) *Route[T] {
 
 // Bind registers one or multiple middleware handlers to the current route.
 func (route *Route[T]) Bind(middlewares ...*hook.Handler[T]) *Route[T] {
-	route.Middlewares = append(route.Middlewares, middlewares...)
+	route.Middlewares = appendSortedHandlers(route.Middlewares, middlewares...)
 
 	// unmark the newly added middlewares in case they were previously "excluded"
 	if route.excludedMiddlewares != nil {

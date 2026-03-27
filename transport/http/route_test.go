@@ -99,6 +99,31 @@ func TestRouteBind(t *testing.T) {
 	}
 }
 
+func TestRouteBindPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	r := Route[*Event]{}
+
+	r.Bind(
+		&hook.Handler[*Event]{Id: "late", Priority: 10},
+		&hook.Handler[*Event]{Id: "early", Priority: -10},
+		&hook.Handler[*Event]{Id: "mid1", Priority: 0},
+		&hook.Handler[*Event]{Id: "mid2", Priority: 0},
+	)
+
+	got := []string{
+		r.Middlewares[0].Id,
+		r.Middlewares[1].Id,
+		r.Middlewares[2].Id,
+		r.Middlewares[3].Id,
+	}
+
+	expected := []string{"early", "mid1", "mid2", "late"}
+	if !slices.Equal(got, expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+}
+
 func TestRouteUnbind(t *testing.T) {
 	t.Parallel()
 

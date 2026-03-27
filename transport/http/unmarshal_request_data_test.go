@@ -440,6 +440,28 @@ func TestUnmarshalRequestData(t *testing.T) {
 	}
 }
 
+func TestUnmarshalRequestDataJSONPayloadDominatesWhenNoMatchingFields(t *testing.T) {
+	t.Parallel()
+
+	data := map[string][]string{
+		"@jsonPayload": {`{"title":"json title","count":42}`},
+		"ignored":      {"value"},
+	}
+
+	dst := struct {
+		Title string `form:"title" json:"title"`
+		Count int    `form:"count" json:"count"`
+	}{}
+
+	if err := http.UnmarshalRequestData(data, &dst, "form", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if dst.Title != "json title" || dst.Count != 42 {
+		t.Fatalf("expected JSON payload values to win, got %+v", dst)
+	}
+}
+
 // note: extra unexported checks in addition to the above test as there
 // is no easy way to print nested structs with all their fields.
 func TestUnmarshalRequestDataUnexportedFields(t *testing.T) {

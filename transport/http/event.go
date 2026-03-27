@@ -431,6 +431,10 @@ func (e *Event) BindBody(dst any) error {
 	contentType := e.Request.Header.Get(headerContentType)
 
 	if strings.HasPrefix(contentType, "application/json") {
+		if body, ok := e.Request.Body.(rereadEnabler); ok {
+			body.EnableReread()
+		}
+
 		dec := json.NewDecoder(e.Request.Body)
 		err := dec.Decode(dst)
 		if err == nil {
@@ -446,6 +450,10 @@ func (e *Event) BindBody(dst any) error {
 	}
 
 	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if body, ok := e.Request.Body.(rereadEnabler); ok {
+			body.EnableReread()
+		}
+
 		if err := e.Request.ParseMultipartForm(DefaultMaxMemory); err != nil {
 			return err
 		}
@@ -454,6 +462,10 @@ func (e *Event) BindBody(dst any) error {
 	}
 
 	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		if body, ok := e.Request.Body.(rereadEnabler); ok {
+			body.EnableReread()
+		}
+
 		if err := e.Request.ParseForm(); err != nil {
 			return err
 		}
