@@ -61,6 +61,12 @@ func (e *Event) Status() int {
 	return status
 }
 
+// BytesWritten reports the number of response body bytes written so far.
+func (e *Event) BytesWritten() int {
+	n, _ := getBytesWritten(e.Response)
+	return n
+}
+
 // Flush flushes buffered data to the current response.
 //
 // Returns [http.ErrNotSupported] if e.Response doesn't implement the [http.Flusher] interface
@@ -94,6 +100,49 @@ func (e *Event) RemoteIP() string {
 	ip, _, _ := net.SplitHostPort(e.Request.RemoteAddr)
 	parsed, _ := netip.ParseAddr(ip)
 	return parsed.StringExpanded()
+}
+
+// RealIP returns the best-effort client IP address, accounting for common proxy headers.
+func (e *Event) RealIP() string {
+	if e.Request == nil {
+		return ""
+	}
+
+	if forwarded := e.Request.Header.Get("Forwarded"); forwarded != "" {
+		for _, part := range strings.Split(forwarded, ";") {
+			part = strings.TrimSpace(part)
+			if len(part) < 4 || !strings.EqualFold(part[:4], "for=") {
+				continue
+			}
+
+			value := strings.Trim(strings.TrimSpace(part[4:]), "\"")
+			if host, _, err := net.SplitHostPort(value); err == nil {
+				value = host
+			}
+
+			value = strings.TrimPrefix(strings.TrimPrefix(value, "["), "]")
+			if parsed, err := netip.ParseAddr(value); err == nil {
+				return parsed.StringExpanded()
+			}
+		}
+	}
+
+	if xff := e.Request.Header.Get("X-Forwarded-For"); xff != "" {
+		for _, part := range strings.Split(xff, ",") {
+			value := strings.TrimSpace(part)
+			if parsed, err := netip.ParseAddr(value); err == nil {
+				return parsed.StringExpanded()
+			}
+		}
+	}
+
+	if realIP := strings.TrimSpace(e.Request.Header.Get("X-Real-IP")); realIP != "" {
+		if parsed, err := netip.ParseAddr(realIP); err == nil {
+			return parsed.StringExpanded()
+		}
+	}
+
+	return e.RemoteIP()
 }
 
 // FindUploadedFiles extracts all form files of "key" from a http request

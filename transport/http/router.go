@@ -12,6 +12,10 @@ import (
 	"github.com/lumm2509/keel/runtime/hook"
 )
 
+type routePatternSetter interface {
+	SetRoutePattern(string)
+}
+
 type EventCleanupFunc func()
 
 // EventFactoryFunc defines the function responsible for creating a Route specific event
@@ -138,6 +142,9 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents [
 				req.Body = body
 
 				event, cleanupFunc := r.eventFactory(resp, req)
+				if setter, ok := any(event).(routePatternSetter); ok {
+					setter.SetRoutePattern(pattern)
+				}
 
 				// trigger the handler hook chain
 				err := routeHook.Trigger(event, v.Action)
@@ -182,6 +189,19 @@ func ErrorHandler(resp http.ResponseWriter, req *http.Request, err error) {
 	}
 }
 
+func getBytesWritten(rw http.ResponseWriter) (int, error) {
+	for {
+		switch w := rw.(type) {
+		case BytesWrittenTracker:
+			return w.BytesWritten(), nil
+		case RWUnwrapper:
+			rw = w.Unwrap()
+		default:
+			return 0, http.ErrNotSupported
+		}
+	}
+}
+
 // -------------------------------------------------------------------
 
 type WriteTracker interface {
@@ -198,22 +218,28 @@ type flushErrorer interface {
 	FlushError() error
 }
 
+type BytesWrittenTracker interface {
+	BytesWritten() int
+}
+
 var (
-	_ WriteTracker  = (*ResponseWriter)(nil)
-	_ StatusTracker = (*ResponseWriter)(nil)
-	_ http.Flusher  = (*ResponseWriter)(nil)
-	_ http.Hijacker = (*ResponseWriter)(nil)
-	_ http.Pusher   = (*ResponseWriter)(nil)
-	_ io.ReaderFrom = (*ResponseWriter)(nil)
-	_ flushErrorer  = (*ResponseWriter)(nil)
+	_ WriteTracker        = (*ResponseWriter)(nil)
+	_ StatusTracker       = (*ResponseWriter)(nil)
+	_ BytesWrittenTracker = (*ResponseWriter)(nil)
+	_ http.Flusher        = (*ResponseWriter)(nil)
+	_ http.Hijacker       = (*ResponseWriter)(nil)
+	_ http.Pusher         = (*ResponseWriter)(nil)
+	_ io.ReaderFrom       = (*ResponseWriter)(nil)
+	_ flushErrorer        = (*ResponseWriter)(nil)
 )
 
 // ResponseWriter wraps a http.ResponseWriter to track its write state.
 type ResponseWriter struct {
 	http.ResponseWriter
 
-	written bool
-	status  int
+	written      bool
+	status       int
+	bytesWritten int
 }
 
 func (rw *ResponseWriter) WriteHeader(status int) {
@@ -231,7 +257,9 @@ func (rw *ResponseWriter) Write(b []byte) (int, error) {
 		rw.WriteHeader(http.StatusOK)
 	}
 
-	return rw.ResponseWriter.Write(b)
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesWritten += n
+	return n, err
 }
 
 // Written implements [WriteTracker] and returns whether the current response body has been already written.
@@ -242,6 +270,11 @@ func (rw *ResponseWriter) Written() bool {
 // Written implements [StatusTracker] and returns the written status code of the current response.
 func (rw *ResponseWriter) Status() int {
 	return rw.status
+}
+
+// BytesWritten reports the total number of bytes written to the response body.
+func (rw *ResponseWriter) BytesWritten() int {
+	return rw.bytesWritten
 }
 
 // Flush implements [http.Flusher] and allows an HTTP handler to flush buffered data to the client.
@@ -291,11 +324,15 @@ func (rw *ResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {
 	for {
 		switch rf := w.(type) {
 		case io.ReaderFrom:
-			return rf.ReadFrom(r)
+			n, err := rf.ReadFrom(r)
+			rw.bytesWritten += int(n)
+			return n, err
 		case RWUnwrapper:
 			w = rf.Unwrap()
 		default:
-			return io.Copy(rw.ResponseWriter, r)
+			n, err := io.Copy(rw.ResponseWriter, r)
+			rw.bytesWritten += int(n)
+			return n, err
 		}
 	}
 }

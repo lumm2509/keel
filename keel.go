@@ -226,6 +226,8 @@ func (a *App[Cradle]) Execute() error {
 }
 
 func (a *App[Cradle]) bootstrap() error {
+	a.container.Logger().Info("application bootstrap started", "event", "app_bootstrap_started")
+
 	event := &BootstrapEvent[Cradle]{Container: a.container}
 
 	err := a.OnBootstrap().Trigger(event, func(e *BootstrapEvent[Cradle]) error {
@@ -233,6 +235,9 @@ func (a *App[Cradle]) bootstrap() error {
 	})
 	if err == nil && !a.container.ResourcesReady() {
 		a.container.Logger().Warn("OnBootstrap hook didn't fail but container resources are still not initialized - maybe missing e.Next()?")
+	}
+	if err == nil {
+		a.container.Logger().Info("application bootstrap completed", "event", "app_bootstrap_completed")
 	}
 
 	return err
@@ -244,9 +249,13 @@ func (a *App[Cradle]) terminate(isRestart bool) error {
 		IsRestart: isRestart,
 	}
 
-	return a.OnTerminate().Trigger(event, func(e *TerminateEvent[Cradle]) error {
+	err := a.OnTerminate().Trigger(event, func(e *TerminateEvent[Cradle]) error {
 		return e.Container.ResetResources()
 	})
+	if err == nil {
+		a.container.Logger().Info("application terminated", "event", "app_terminated", "restart", isRestart)
+	}
+	return err
 }
 
 func (a *App[Cradle]) skipBootstrap() bool {
@@ -605,6 +614,14 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	if config.ShowStartBanner {
 		printStartBanner(baseURL)
 	}
+
+	a.container.Logger().Info(
+		"application server started",
+		"event", "app_server_started",
+		"addr", listener.Addr().String(),
+		"base_url", baseURL,
+		"https", config.HttpsAddr != "",
+	)
 
 	if config.HttpsAddr != "" {
 		if config.HttpAddr != "" && certManager != nil {

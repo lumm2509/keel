@@ -1,8 +1,11 @@
 package container
 
 import (
+	"log/slog"
 	"maps"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/lumm2509/keel/pkg/inflector"
 	"github.com/lumm2509/keel/transport/http"
@@ -19,11 +22,112 @@ type RequestEvent[Cradle any] struct {
 	cachedRequestInfo *RequestInfo
 	http.Event
 
-	mu sync.Mutex
+	mu           sync.Mutex
+	requestID    string
+	startTime    time.Time
+	loggerBase   *slog.Logger
+	logger       *slog.Logger
+	routePattern string
 }
 
 func (e *RequestEvent[Cradle]) Cradle() *Cradle {
 	return e.Container.Cradle()
+}
+
+func (e *RequestEvent[Cradle]) RequestID() string {
+	return e.requestID
+}
+
+func (e *RequestEvent[Cradle]) SetRequestID(id string) {
+	e.requestID = id
+	if e.Request != nil {
+		if id != "" {
+			e.Request.Header.Set("X-Request-ID", id)
+		} else {
+			e.Request.Header.Del("X-Request-ID")
+		}
+	}
+	if e.Response != nil && id != "" {
+		e.Response.Header().Set("X-Request-ID", id)
+	}
+	e.rebuildLogger()
+}
+
+func (e *RequestEvent[Cradle]) StartTime() time.Time {
+	return e.startTime
+}
+
+func (e *RequestEvent[Cradle]) Duration() time.Duration {
+	if e.startTime.IsZero() {
+		return 0
+	}
+
+	return time.Since(e.startTime)
+}
+
+func (e *RequestEvent[Cradle]) Logger() *slog.Logger {
+	if e.logger != nil {
+		return e.logger
+	}
+
+	e.rebuildLogger()
+	return e.logger
+}
+
+func (e *RequestEvent[Cradle]) WithLogAttrs(args ...any) *slog.Logger {
+	return e.Logger().With(args...)
+}
+
+func (e *RequestEvent[Cradle]) ClientIP() string {
+	return e.RealIP()
+}
+
+func (e *RequestEvent[Cradle]) RoutePattern() string {
+	return e.routePattern
+}
+
+func (e *RequestEvent[Cradle]) SetStartTime(start time.Time) {
+	e.startTime = start
+}
+
+func (e *RequestEvent[Cradle]) SetLogger(logger *slog.Logger) {
+	e.loggerBase = logger
+	e.rebuildLogger()
+}
+
+func (e *RequestEvent[Cradle]) SetRoutePattern(pattern string) {
+	if method, route, ok := strings.Cut(pattern, " "); ok && method != "" && strings.HasPrefix(route, "/") {
+		e.routePattern = route
+	} else {
+		e.routePattern = pattern
+	}
+	e.rebuildLogger()
+}
+
+func (e *RequestEvent[Cradle]) rebuildLogger() {
+	base := e.loggerBase
+	if base == nil {
+		base = slog.Default()
+		if e.Container != nil && e.Container.Logger() != nil {
+			base = e.Container.Logger()
+		}
+	}
+
+	args := make([]any, 0, 8)
+	if e.requestID != "" {
+		args = append(args, "request_id", e.requestID)
+	}
+	if e.Request != nil {
+		args = append(args, "method", e.Request.Method)
+		if e.Request.URL != nil {
+			args = append(args, "path", e.Request.URL.Path)
+		}
+	}
+	if e.routePattern != "" {
+		args = append(args, "route", e.routePattern)
+	}
+
+	e.logger = base.With(args...)
 }
 
 // RequestInfo parses the current request into RequestInfo instance.
