@@ -1,9 +1,6 @@
 package config
 
-import (
-	"log/slog"
-	"time"
-)
+import "log/slog"
 
 type ModuleOptions interface{}
 
@@ -58,6 +55,23 @@ type HttpCompressionOptions struct {
 	ThresHold *int32 `json:"thresHold,omitempty" xml:"thresHold,omitempty" form:"thresHold,omitempty"`
 }
 
+type JWTOptions struct {
+	Secret *string `json:"secret,omitempty" xml:"secret,omitempty" form:"secret,omitempty"`
+}
+
+type HttpConfigOptions struct {
+	JWT               *JWTOptions             `json:"jwt,omitempty" xml:"jwt,omitempty" form:"jwt,omitempty"`
+	CookieSecret      *string                 `json:"cookieSecret,omitempty" xml:"cookieSecret,omitempty" form:"cookieSecret,omitempty"`
+	AllowedOrigins    []string                `json:"allowedOrigins,omitempty" xml:"allowedOrigins,omitempty" form:"allowedOrigins,omitempty"`
+	TrustedProxyCIDRs []string                `json:"trustedProxyCidrs,omitempty" xml:"trustedProxyCidrs,omitempty" form:"trustedProxyCidrs,omitempty"`
+	Compression       *HttpCompressionOptions `json:"compression,omitempty" xml:"compression,omitempty" form:"compression,omitempty"`
+	AutoCert          *struct {
+		CacheDir      *string  `json:"cacheDir,omitempty"`
+		HostWhitelist []string `json:"hostWhitelist,omitempty"`
+		Email         *string  `json:"email,omitempty"`
+	} `json:"autoCert,omitempty"`
+}
+
 type KeelCloudOptions struct {
 	EnviromentHandle *string `json:"enviromentHandle,omitempty" xml:"enviromentHandle,omitempty" form:"enviromentHandle,omitempty"`
 	SandboxHandle    *string `json:"sandboxHandle,omitempty" xml:"sandboxHandle,omitempty" form:"sandboxHandle,omitempty"`
@@ -94,26 +108,12 @@ type ProjectConfigOptions struct {
 	CookieOptions         *CookieOptions         `json:"cookieOptions,omitempty" xml:"cookieOptions,omitempty" form:"cookieOptions,omitempty"`
 	JobsBatchSize         *int32                 `json:"jobsBatchSize,omitempty" xml:"jobsBatchSize,omitempty" form:"jobsBatchSize,omitempty"`
 	IsDev                 bool                   `json:"isDev" xml:"isDev" form:"isDev"`
-	Http                  *struct {
-		JwtSecret           *string                 `json:"jwtSecret,omitempty" xml:"jwtSecret,omitempty" form:"jwtSecret,omitempty"`
-		JwtPublicKey        *string                 `json:"jwtPublicKey,omitempty" xml:"jwtPublicKey,omitempty" form:"jwtPublicKey,omitempty"`
-		JwtOptions          *string                 `json:"jwtOptions,omitempty" xml:"jwtOptions,omitempty" form:"jwtOptions,omitempty"`
-		JwtVerifyOptions    *string                 `json:"jwtVerifyOptions,omitempty" xml:"jwtVerifyOptions,omitempty" form:"jwtVerifyOptions,omitempty"`
-		JwtExpiresIn        *time.Time              `json:"jwtExpiresIn,omitempty" xml:"jwtExpiresIn,omitempty" form:"jwtExpiresIn,omitempty"`
-		CookieSecret        *string                 `json:"cookieSecret,omitempty" xml:"cookieSecret,omitempty" form:"cookieSecret,omitempty"`
-		AuthCors            string                  `json:"authCors,omitempty" xml:"authCors,omitempty" form:"authCors,omitempty"`
-		Compression         *HttpCompressionOptions `json:"compression,omitempty" xml:"compression,omitempty" form:"compression,omitempty"`
-		AdminCors           *string                 `json:"adminCors,omitempty" xml:"adminCors,omitempty" form:"adminCors,omitempty"`
-		AuthMethodsPerActor map[string][]string     `json:"authMethodsPerActor,omitempty" xml:"authMethodsPerActor,omitempty" form:"authMethodsPerActor,omitempty"`
-		AutoCert            *struct {
-			CacheDir      *string  `json:"cacheDir,omitempty"`
-			HostWhitelist []string `json:"hostWhitelist,omitempty"`
-			Email         *string  `json:"email,omitempty"`
-		} `json:"autoCert,omitempty"`
-	} `json:"http,omitempty" xml:"http,omitempty" form:"http,omitempty"`
-	Cloud *KeelCloudOptions `json:"cloud,omitempty" xml:"cloud,omitempty" form:"cloud,omitempty"`
+	Http                  *HttpConfigOptions     `json:"http,omitempty" xml:"http,omitempty" form:"http,omitempty"`
+	Cloud                 *KeelCloudOptions      `json:"cloud,omitempty" xml:"cloud,omitempty" form:"cloud,omitempty"`
 }
 
+// ConfigModule is a runtime configuration aggregate.
+// It is a convenience boundary for app settings, not an architectural layer by itself.
 type ConfigModule struct {
 	Projectconfig ProjectConfigOptions `json:"projectConfig,omitempty" xml:"projectConfig,omitempty" form:"projectConfig,omitempty"`
 	Admin         AdminOptions         `json:"admin,omitempty" xml:"admin,omitempty" form:"admin,omitempty"`
