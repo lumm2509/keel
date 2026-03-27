@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/lumm2509/keel/apis"
+	"github.com/lumm2509/keel/config"
 	"github.com/lumm2509/keel/container"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ type HMRFunc func(ctx context.Context) error
 
 func NewDevelopCommand[Cradle any](
 	ctr container.Container[Cradle],
+	cfg *config.ConfigModule,
 	bindRoutes BindRoutesFunc[Cradle],
 	hmr HMRFunc,
 	showStartBanner bool,
@@ -60,7 +62,7 @@ func NewDevelopCommand[Cradle any](
 			}
 
 			g.Go(func() error {
-				err := apis.Serve(ctr, apis.ServeConfig{
+				err := apis.Serve(ctr, cfg, apis.ServeConfig{
 					HttpAddr:           httpAddr,
 					HttpsAddr:          httpsAddr,
 					ShowStartBanner:    showStartBanner,

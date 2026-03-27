@@ -22,6 +22,10 @@ type RequestEvent[Cradle any] struct {
 	mu sync.Mutex
 }
 
+func (e *RequestEvent[Cradle]) Cradle() *Cradle {
+	return e.Container.Cradle()
+}
+
 // RequestInfo parses the current request into RequestInfo instance.
 //
 // Note that the returned result is cached to avoid copying the request data multiple times

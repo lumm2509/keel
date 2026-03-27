@@ -5,15 +5,12 @@ import (
 	"time"
 
 	"github.com/lumm2509/keel/config"
-	"github.com/lumm2509/keel/container"
 )
 
 func TestBuildCertManagerWithoutConfigReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	ctr := container.LoadBasecontainer[struct{}](nil)
-
-	manager, err := buildCertManager(ctr, nil)
+	manager, err := buildCertManager(nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildCertManager() error = %v", err)
 	}
@@ -27,7 +24,7 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 	t.Parallel()
 
 	cacheDir := "autocert"
-	ctr := container.LoadBasecontainer[struct{}](&config.ConfigModule{
+	cfg := &config.ConfigModule{
 		Projectconfig: config.ProjectConfigOptions{
 			Http: &struct {
 				JwtSecret           *string                        `json:"jwtSecret,omitempty" xml:"jwtSecret,omitempty" form:"jwtSecret,omitempty"`
@@ -55,9 +52,9 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
 
-	_, err := buildCertManager(ctr, nil)
+	_, err := buildCertManager(cfg, "", nil)
 	if err == nil {
 		t.Fatalf("expected buildCertManager() to fail when cache dir is configured without data dir")
 	}

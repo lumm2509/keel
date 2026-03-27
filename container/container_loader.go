@@ -12,7 +12,6 @@ import (
 	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/subscriptions"
 	"github.com/lumm2509/keel/runtime/cron"
-	"github.com/lumm2509/keel/runtime/hook"
 )
 
 var _ Container[any] = (*BaseContainer[any])(nil)
@@ -30,9 +29,6 @@ type BaseContainer[Cradle any] struct {
 	cron                *cron.Cron
 	subscriptionsBroker *subscriptions.Broker
 	logger              *slog.Logger
-	onBootstrap         *hook.Hook[*BootstrapEvent[Cradle]]
-	onServe             *hook.Hook[*ServeEvent[Cradle]]
-	onTerminate         *hook.Hook[*TerminateEvent[Cradle]]
 	dbConnect           func() (*sql.DB, error)
 }
 
@@ -52,42 +48,6 @@ func LoadBasecontainer[C any](config *config.ConfigModule, cradle ...*C) *BaseCo
 	container.dbConnect = container.connectDataDB
 
 	return container
-}
-
-// Bootstrap implements [Container].
-func (b *BaseContainer[Cradle]) Bootstrap() error {
-	// Bootstrap initializes the container resources
-	// (aka. open db connection, initialize logger, etc.).
-	event := &BootstrapEvent[Cradle]{Container: b}
-
-	err := b.OnBootstrap().Trigger(event, func(e *BootstrapEvent[Cradle]) error {
-		// clear resources of previous state (if any)
-		if err := b.ResetBootstrapState(); err != nil {
-			return err
-		}
-
-		if err := b.initLogger(); err != nil {
-			return err
-		}
-
-		if err := b.initDataDB(); err != nil {
-			return err
-		}
-
-		b.bootstrapped = true
-		return nil
-	})
-
-	if err == nil && !b.IsBootstrapped() {
-		b.Logger().Warn("OnBootstrap hook didn't fail but the app is still not bootstrapped - maybe missing e.Next()?")
-	}
-
-	return err
-}
-
-// Config implements [Container].
-func (b *BaseContainer[Cradle]) Config() *config.ConfigModule {
-	return b.config
 }
 
 // Cradle implements [Container].
@@ -115,8 +75,8 @@ func (b *BaseContainer[Cradle]) EncryptionEnv() string {
 	return ""
 }
 
-// IsBootstrapped implements [Container].
-func (b *BaseContainer[Cradle]) IsBootstrapped() bool {
+// ResourcesReady implements [Container].
+func (b *BaseContainer[Cradle]) ResourcesReady() bool {
 	return b.bootstrapped
 }
 
@@ -148,40 +108,13 @@ func (b *BaseContainer[Cradle]) NewFilesystem() (*filesystem.System, error) {
 	return filesystem.NewLocal(dataDir)
 }
 
-// OnBootstrap implements [Container].
-func (b *BaseContainer[Cradle]) OnBootstrap() *hook.Hook[*BootstrapEvent[Cradle]] {
-	if b.onBootstrap == nil {
-		b.onBootstrap = &hook.Hook[*BootstrapEvent[Cradle]]{}
-	}
-
-	return b.onBootstrap
-}
-
-// OnServe implements [Container].
-func (b *BaseContainer[Cradle]) OnServe() *hook.Hook[*ServeEvent[Cradle]] {
-	if b.onServe == nil {
-		b.onServe = &hook.Hook[*ServeEvent[Cradle]]{}
-	}
-
-	return b.onServe
-}
-
-// OnTerminate implements [Container].
-func (b *BaseContainer[Cradle]) OnTerminate() *hook.Hook[*TerminateEvent[Cradle]] {
-	if b.onTerminate == nil {
-		b.onTerminate = &hook.Hook[*TerminateEvent[Cradle]]{}
-	}
-
-	return b.onTerminate
-}
-
 // ReloadSettings implements [Container].
 func (b *BaseContainer[Cradle]) ReloadSettings() error {
 	return errContainerReloadNotImplemented
 }
 
-// ResetBootstrapState implements [Container].
-func (b *BaseContainer[Cradle]) ResetBootstrapState() error {
+// ResetResources implements [Container].
+func (b *BaseContainer[Cradle]) ResetResources() error {
 	b.Cron().Stop()
 	b.bootstrapped = false
 
@@ -193,6 +126,24 @@ func (b *BaseContainer[Cradle]) ResetBootstrapState() error {
 	b.db = nil
 
 	return err
+}
+
+// InitResources implements [Container].
+func (b *BaseContainer[Cradle]) InitResources() error {
+	if err := b.ResetResources(); err != nil {
+		return err
+	}
+
+	if err := b.initLogger(); err != nil {
+		return err
+	}
+
+	if err := b.initDataDB(); err != nil {
+		return err
+	}
+
+	b.bootstrapped = true
+	return nil
 }
 
 // Restart implements [Container].

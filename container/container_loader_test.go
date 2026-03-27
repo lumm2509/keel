@@ -75,7 +75,7 @@ func (c *testSQLConn) Ping(context.Context) error {
 	return nil
 }
 
-func TestBootstrapInitializesDatabaseAndExposesIt(t *testing.T) {
+func TestInitResourcesInitializesDatabaseAndExposesIt(t *testing.T) {
 	type cradle struct{}
 
 	cfg := &config.ConfigModule{}
@@ -97,20 +97,20 @@ func TestBootstrapInitializesDatabaseAndExposesIt(t *testing.T) {
 
 		return db, nil
 	}
-	if err := container.Bootstrap(); err != nil {
-		t.Fatalf("Bootstrap() error = %v", err)
+	if err := container.InitResources(); err != nil {
+		t.Fatalf("InitResources() error = %v", err)
 	}
 
 	if container.DataBase() == nil {
 		t.Fatalf("expected database to be initialized")
 	}
 
-	if !container.IsBootstrapped() {
-		t.Fatalf("expected container to be bootstrapped")
+	if !container.ResourcesReady() {
+		t.Fatalf("expected container resources to be initialized")
 	}
 
-	if err := container.ResetBootstrapState(); err != nil {
-		t.Fatalf("ResetBootstrapState() error = %v", err)
+	if err := container.ResetResources(); err != nil {
+		t.Fatalf("ResetResources() error = %v", err)
 	}
 
 	if container.DataBase() != nil {
@@ -122,18 +122,18 @@ func TestBootstrapInitializesDatabaseAndExposesIt(t *testing.T) {
 	}
 }
 
-func TestBootstrapWithoutDatabaseURLKeepsContainerUsable(t *testing.T) {
+func TestInitResourcesWithoutDatabaseURLKeepsContainerUsable(t *testing.T) {
 	type cradle struct{}
 
 	container := LoadBasecontainer[cradle](&config.ConfigModule{})
 
-	err := container.Bootstrap()
+	err := container.InitResources()
 	if err != nil {
-		t.Fatalf("expected Bootstrap() to succeed without database url, got %v", err)
+		t.Fatalf("expected InitResources() to succeed without database url, got %v", err)
 	}
 
-	if !container.IsBootstrapped() {
-		t.Fatalf("expected container to be bootstrapped without database url")
+	if !container.ResourcesReady() {
+		t.Fatalf("expected container resources to initialize without database url")
 	}
 
 	if container.DataBase() != nil {
@@ -141,17 +141,17 @@ func TestBootstrapWithoutDatabaseURLKeepsContainerUsable(t *testing.T) {
 	}
 }
 
-func TestBootstrapWithoutConfigKeepsContainerUsable(t *testing.T) {
+func TestInitResourcesWithoutConfigKeepsContainerUsable(t *testing.T) {
 	type cradle struct{}
 
 	container := LoadBasecontainer[cradle](nil)
 
-	if err := container.Bootstrap(); err != nil {
-		t.Fatalf("expected Bootstrap() to succeed without config, got %v", err)
+	if err := container.InitResources(); err != nil {
+		t.Fatalf("expected InitResources() to succeed without config, got %v", err)
 	}
 
-	if !container.IsBootstrapped() {
-		t.Fatalf("expected container to be bootstrapped without config")
+	if !container.ResourcesReady() {
+		t.Fatalf("expected container resources to initialize without config")
 	}
 
 	if container.DataBase() != nil {

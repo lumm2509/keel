@@ -9,10 +9,10 @@ import (
 	stdhttp "net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/lumm2509/keel/config"
 	"github.com/lumm2509/keel/container"
 	"github.com/lumm2509/keel/pkg/list"
 	"github.com/lumm2509/keel/runtime/hook"
@@ -33,6 +33,7 @@ type ServeConfig struct {
 // Serve starts a new app web server.
 func Serve[Cradle any](
 	ctr container.Container[Cradle],
+	cfg *config.ConfigModule,
 	config ServeConfig,
 	bindRoutes func(ctr container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error),
 ) error {
@@ -55,7 +56,7 @@ func Serve[Cradle any](
 		router.Bind(wwwRedirect[Cradle](wwwRedirects))
 	}
 
-	certManager, err := buildCertManager(ctr, hostNames)
+	certManager, err := buildCertManager(cfg, ctr.DataDir(), hostNames)
 	if err != nil {
 		return err
 	}
@@ -83,34 +84,9 @@ func Serve[Cradle any](
 	}
 
 	var listener net.Listener
-	var wg sync.WaitGroup
-
-	ctr.OnTerminate().Bind(&hook.Handler[*container.TerminateEvent[Cradle]]{
-		Id: "keelGracefulShutdown",
-		Func: func(te *container.TerminateEvent[Cradle]) error {
-			cancelBaseCtx()
-
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-
-			wg.Add(1)
-			_ = server.Shutdown(ctx)
-
-			if te.IsRestart {
-				time.AfterFunc(3*time.Second, func() {
-					wg.Done()
-				})
-			} else {
-				wg.Done()
-			}
-
-			return te.Next()
-		},
-		Priority: -9999,
-	})
 
 	defer func() {
-		wg.Wait()
+		cancelBaseCtx()
 		if listener != nil {
 			_ = listener.Close()
 		}
@@ -118,47 +94,26 @@ func Serve[Cradle any](
 
 	var baseURL string
 
-	serveEvent := &container.ServeEvent[Cradle]{
-		Container:   ctr,
-		Router:      router,
-		Server:      server,
-		CertManager: certManager,
-	}
-
-	if err := ctr.OnServe().Trigger(serveEvent, func(e *container.ServeEvent[Cradle]) error {
-		handler, err := e.Router.BuildMux()
-		if err != nil {
-			return err
-		}
-
-		e.Server.Handler = handler
-		baseURL = resolveBaseURL(config, e.Server.Addr)
-
-		addr := e.Server.Addr
-		if addr == "" {
-			if config.HttpsAddr != "" {
-				addr = ":https"
-			} else {
-				addr = ":http"
-			}
-		}
-
-		if e.Listener == nil {
-			listener, err = net.Listen("tcp", addr)
-			if err != nil {
-				return err
-			}
-		} else {
-			listener = e.Listener
-		}
-
-		return nil
-	}); err != nil {
+	handler, err := router.BuildMux()
+	if err != nil {
 		return err
 	}
 
-	if listener == nil {
-		return errors.New("the OnServe listener was not initialized; did you forget to call e.Next()?")
+	server.Handler = handler
+	baseURL = resolveBaseURL(config, server.Addr)
+
+	addr := server.Addr
+	if addr == "" {
+		if config.HttpsAddr != "" {
+			addr = ":https"
+		} else {
+			addr = ":http"
+		}
+	}
+
+	listener, err = net.Listen("tcp", addr)
+	if err != nil {
+		return err
 	}
 
 	if config.ShowStartBanner {
@@ -172,9 +127,9 @@ func Serve[Cradle any](
 			}()
 		}
 
-		err = serveEvent.Server.ServeTLS(listener, "", "")
+		err = server.ServeTLS(listener, "", "")
 	} else {
-		err = serveEvent.Server.Serve(listener)
+		err = server.Serve(listener)
 	}
 
 	if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
@@ -210,8 +165,7 @@ func collectHostNames(mainAddr string, certificateDomains []string) ([]string, [
 	return hostNames, wwwRedirects
 }
 
-func buildCertManager[Cradle any](ctr container.Container[Cradle], hostNames []string) (*autocert.Manager, error) {
-	cfg := ctr.Config()
+func buildCertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (*autocert.Manager, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -229,7 +183,6 @@ func buildCertManager[Cradle any](ctr container.Container[Cradle], hostNames []s
 
 	var cache autocert.Cache
 	if cacheDir != "" {
-		dataDir := ctr.DataDir()
 		if dataDir == "" {
 			return nil, errors.New("autocert cache dir requires container data dir")
 		}
