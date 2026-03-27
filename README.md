@@ -55,7 +55,7 @@ a.OnServe().Add(func(e *app.ServeEvent[any]) error {
 if err := a.Bootstrap(); err != nil {
     panic(err)
 }
-````
+```
 
 The important part is not the API surface — it’s that the wiring is already done.
 
