@@ -8,6 +8,12 @@ import (
 	"github.com/lumm2509/keel/pkg/search"
 )
 
+type typedPickerItem struct {
+	A int    `json:"a"`
+	B int    `json:"b"`
+	C string `json:"c"`
+}
+
 func TestPickFields(t *testing.T) {
 	scenarios := []struct {
 		name        string
@@ -151,6 +157,22 @@ func TestPickFields(t *testing.T) {
 				Items: []any{
 					map[string]any{"a": 11, "b": 11, "c": "test1"},
 					map[string]any{"a": 22, "b": 22, "c": "test2"},
+				},
+			},
+			"a,c",
+			false,
+			`{"items":[{"a":11,"c":"test1"},{"a":22,"c":"test2"}],"page":1,"perPage":10,"totalItems":20,"totalPages":30}`,
+		},
+		{
+			"SearchResult typed items",
+			search.Result{
+				Page:       1,
+				PerPage:    10,
+				TotalItems: 20,
+				TotalPages: 30,
+				Items: []typedPickerItem{
+					{A: 11, B: 11, C: "test1"},
+					{A: 22, B: 22, C: "test2"},
 				},
 			},
 			"a,c",

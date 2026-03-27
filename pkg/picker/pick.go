@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/search"
 	"github.com/lumm2509/keel/pkg/tokenizer"
 )
+
+var pickFieldTreeCache = store.New[string, *fieldTree](nil)
+
+const maxCachedPickFieldTrees = 256
 
 // Pick converts data into a []any, map[string]any, etc. (using json marshal->unmarshal)
 // containing only the fields from the parsed rawFields expression.
@@ -20,17 +25,43 @@ import (
 //	data := map[string]any{"a": 1, "b": 2, "c": map[string]any{"c1": 11, "c2": 22}}
 //	Pick(data, "a,c.c1") // map[string]any{"a": 1, "c": map[string]any{"c1": 11}}
 func Pick(data any, rawFields string) (any, error) {
-	parsedFields, err := parseFields(rawFields)
+	tree, err := parseFieldTree(rawFields)
 	if err != nil {
 		return nil, err
 	}
 
-	// marshalize the provided data to ensure that the related json.Marshaler
-	// implementations are invoked, and then convert it back to a plain
-	// json value that we can further operate on.
-	//
-	// @todo research other approaches to avoid the double serialization
-	// ---
+	switch v := data.(type) {
+	case map[string]any:
+		return projectPickedValue(v, tree)
+	case []map[string]any:
+		return projectPickedValue(v, tree)
+	case []any:
+		return projectPickedValue(v, tree)
+	case search.Result:
+		cloned := v
+		cloned.Items, err = normalizePickItems(v.Items)
+		if err != nil {
+			return nil, err
+		}
+		if err := pickParsedFields(cloned.Items, tree); err != nil {
+			return nil, err
+		}
+		return cloned, nil
+	case *search.Result:
+		if v == nil {
+			return nil, nil
+		}
+		cloned := *v
+		cloned.Items, err = normalizePickItems(v.Items)
+		if err != nil {
+			return nil, err
+		}
+		if err := pickParsedFields(cloned.Items, tree); err != nil {
+			return nil, err
+		}
+		return &cloned, nil
+	}
+
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
@@ -40,24 +71,145 @@ func Pick(data any, rawFields string) (any, error) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		return nil, err
 	}
-	// ---
 
-	// special cases to preserve the same fields format when used with single item or search results data.
-	var isSearchResult bool
-	switch data.(type) {
-	case search.Result, *search.Result:
-		isSearchResult = true
-	}
-
-	if isSearchResult {
-		if decodedMap, ok := decoded.(map[string]any); ok {
-			pickParsedFields(decodedMap["items"], parsedFields)
-		}
-	} else {
-		pickParsedFields(decoded, parsedFields)
+	if err := pickParsedFields(decoded, tree); err != nil {
+		return nil, err
 	}
 
 	return decoded, nil
+}
+
+func projectPickedValue(data any, fields *fieldTree) (any, error) {
+	if isNoopFieldTree(fields) {
+		return cloneJSONLike(data), nil
+	}
+
+	switch v := data.(type) {
+	case map[string]any:
+		return projectPickedMap(v, fields)
+	case []map[string]any:
+		result := make([]map[string]any, len(v))
+		for i := range v {
+			item, err := projectPickedMap(v[i], fields)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = item
+		}
+		return result, nil
+	case []any:
+		if len(v) == 0 {
+			return []any{}, nil
+		}
+
+		if _, ok := v[0].(map[string]any); !ok {
+			return cloneAnySlice(v), nil
+		}
+
+		result := make([]any, len(v))
+		for i, item := range v {
+			mapped, ok := item.(map[string]any)
+			if !ok {
+				result[i] = item
+				continue
+			}
+
+			projected, err := projectPickedMap(mapped, fields)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = projected
+		}
+		return result, nil
+	default:
+		if fields != nil && fields.modifier != nil {
+			return fields.modifier.Modify(v)
+		}
+		return v, nil
+	}
+}
+
+func projectPickedMap(data map[string]any, fields *fieldTree) (map[string]any, error) {
+	if isNoopFieldTree(fields) {
+		return cloneMap(data), nil
+	}
+
+	result := make(map[string]any, len(data))
+
+	for key, value := range data {
+		next := fields.children[key]
+		if next == nil {
+			next = fields.wildcard
+		}
+		if next == nil {
+			continue
+		}
+
+		projected, err := projectPickedValue(value, next)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = projected
+	}
+
+	return result, nil
+}
+
+func isNoopFieldTree(fields *fieldTree) bool {
+	return fields == nil || (fields.modifier == nil && len(fields.children) == 0 && fields.wildcard == nil)
+}
+
+func parseFieldTree(rawFields string) (*fieldTree, error) {
+	if cached, ok := pickFieldTreeCache.GetOk(rawFields); ok {
+		return cached, nil
+	}
+
+	parsedFields, err := parseFields(rawFields)
+	if err != nil {
+		return nil, err
+	}
+
+	tree := newFieldTree(parsedFields)
+	pickFieldTreeCache.SetIfLessThanLimit(rawFields, tree, maxCachedPickFieldTrees)
+	return tree, nil
+}
+
+type fieldTree struct {
+	modifier Modifier
+	children map[string]*fieldTree
+	wildcard *fieldTree
+}
+
+func newFieldTree(fields map[string]Modifier) *fieldTree {
+	root := &fieldTree{children: make(map[string]*fieldTree, len(fields))}
+
+	for path, modifier := range fields {
+		node := root
+		for _, part := range strings.Split(path, ".") {
+			if part == "*" {
+				if node.wildcard == nil {
+					node.wildcard = &fieldTree{children: make(map[string]*fieldTree)}
+				}
+				node = node.wildcard
+				continue
+			}
+
+			if node.children == nil {
+				node.children = make(map[string]*fieldTree)
+			}
+
+			child, ok := node.children[part]
+			if !ok {
+				child = &fieldTree{children: make(map[string]*fieldTree)}
+				node.children[part] = child
+			}
+			node = child
+		}
+
+		node.modifier = modifier
+	}
+
+	return root
 }
 
 func parseFields(rawFields string) (map[string]Modifier, error) {
@@ -87,10 +239,14 @@ func parseFields(rawFields string) (map[string]Modifier, error) {
 	return result, nil
 }
 
-func pickParsedFields(data any, fields map[string]Modifier) error {
+func pickParsedFields(data any, fields *fieldTree) error {
+	if fields == nil {
+		return nil
+	}
+
 	switch v := data.(type) {
 	case map[string]any:
-		pickMapFields(v, fields)
+		return pickMapFields(v, fields)
 	case []map[string]any:
 		for _, item := range v {
 			if err := pickMapFields(item, fields); err != nil {
@@ -108,7 +264,7 @@ func pickParsedFields(data any, fields map[string]Modifier) error {
 
 		for _, item := range v {
 			if err := pickMapFields(item.(map[string]any), fields); err != nil {
-				return nil
+				return err
 			}
 		}
 	}
@@ -116,69 +272,95 @@ func pickParsedFields(data any, fields map[string]Modifier) error {
 	return nil
 }
 
-func pickMapFields(data map[string]any, fields map[string]Modifier) error {
-	if len(fields) == 0 {
+func pickMapFields(data map[string]any, fields *fieldTree) error {
+	if fields == nil || (fields.modifier == nil && len(fields.children) == 0 && fields.wildcard == nil) {
 		return nil // nothing to pick
 	}
 
-	if m, ok := fields["*"]; ok {
-		// append all missing root level data keys
-		for k := range data {
-			var exists bool
-
-			for f := range fields {
-				if strings.HasPrefix(f+".", k+".") {
-					exists = true
-					break
-				}
-			}
-
-			if !exists {
-				fields[k] = m
-			}
-		}
+	if fields.modifier != nil {
+		return nil
 	}
 
-DataLoop:
 	for k := range data {
-		matchingFields := make(map[string]Modifier, len(fields))
-		for f, m := range fields {
-			if strings.HasPrefix(f+".", k+".") {
-				matchingFields[f] = m
-				continue
-			}
+		next := fields.children[k]
+		if next == nil {
+			next = fields.wildcard
 		}
 
-		if len(matchingFields) == 0 {
+		if next == nil {
 			delete(data, k)
-			continue DataLoop
+			continue
 		}
 
-		// remove the current key from the matching fields path
-		for f, m := range matchingFields {
-			remains := strings.TrimSuffix(strings.TrimPrefix(f+".", k+"."), ".")
-
-			// final key
-			if remains == "" {
-				if m != nil {
-					var err error
-					data[k], err = m.Modify(data[k])
-					if err != nil {
-						return err
-					}
-				}
-				continue DataLoop
+		if next.modifier != nil {
+			var err error
+			data[k], err = next.modifier.Modify(data[k])
+			if err != nil {
+				return err
 			}
-
-			// cleanup the old field key and continue with the rest of the field path
-			delete(matchingFields, f)
-			matchingFields[remains] = m
+			continue
 		}
 
-		if err := pickParsedFields(data[k], matchingFields); err != nil {
+		if err := pickParsedFields(data[k], next); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func cloneMap(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = cloneJSONLike(v)
+	}
+	return dst
+}
+
+func cloneMapSlice(src []map[string]any) []map[string]any {
+	dst := make([]map[string]any, len(src))
+	for i := range src {
+		dst[i] = cloneMap(src[i])
+	}
+	return dst
+}
+
+func cloneAnySlice(src []any) []any {
+	dst := make([]any, len(src))
+	for i, v := range src {
+		dst[i] = cloneJSONLike(v)
+	}
+	return dst
+}
+
+func cloneJSONLike(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneMap(v)
+	case []map[string]any:
+		return cloneMapSlice(v)
+	case []any:
+		return cloneAnySlice(v)
+	default:
+		return v
+	}
+}
+
+func normalizePickItems(items any) (any, error) {
+	switch v := items.(type) {
+	case map[string]any, []map[string]any, []any:
+		return cloneJSONLike(v), nil
+	default:
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+
+		var decoded any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			return nil, err
+		}
+
+		return decoded, nil
+	}
 }
