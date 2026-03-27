@@ -13,26 +13,26 @@ import (
 
 type BootstrapEvent[C any] struct {
 	hook.Event
-	App Container[C]
+	Container Container[C]
 }
 
 type TerminateEvent[C any] struct {
 	hook.Event
-	App       Container[C]
+	Container Container[C]
 	IsRestart bool
 }
 
 type BackupEvent[C any] struct {
 	hook.Event
-	App     Container[C]
-	Context context.Context
-	Name    string   // the name of the backup to create/restore.
-	Exclude []string // list of dir entries to exclude from the backup create/restore.
+	Container Container[C]
+	Context   context.Context
+	Name      string   // the name of the backup to create/restore.
+	Exclude   []string // list of dir entries to exclude from the backup create/restore.
 }
 
 type ServeEvent[C any] struct {
 	hook.Event
-	App         Container[C]
+	Container   Container[C]
 	Router      *http.Router[*RequestEvent[C]]
 	Server      *stdhttp.Server
 	CertManager *autocert.Manager

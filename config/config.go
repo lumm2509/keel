@@ -58,7 +58,7 @@ type HttpCompressionOptions struct {
 	ThresHold *int32 `json:"thresHold,omitempty" xml:"thresHold,omitempty" form:"thresHold,omitempty"`
 }
 
-type PalmTreeCloudOptions struct {
+type KeelCloudOptions struct {
 	EnviromentHandle *string `json:"enviromentHandle,omitempty" xml:"enviromentHandle,omitempty" form:"enviromentHandle,omitempty"`
 	SandboxHandle    *string `json:"sandboxHandle,omitempty" xml:"sandboxHandle,omitempty" form:"sandboxHandle,omitempty"`
 	ApiKey           *string `json:"apiKey,omitempty" xml:"apiKey,omitempty" form:"apiKey,omitempty"`
@@ -93,6 +93,7 @@ type ProjectConfigOptions struct {
 	SessionOptions        *SessionOptions        `json:"sessionOptions,omitempty" xml:"sessionOptions,omitempty" form:"sessionOptions,omitempty"`
 	CookieOptions         *CookieOptions         `json:"cookieOptions,omitempty" xml:"cookieOptions,omitempty" form:"cookieOptions,omitempty"`
 	JobsBatchSize         *int32                 `json:"jobsBatchSize,omitempty" xml:"jobsBatchSize,omitempty" form:"jobsBatchSize,omitempty"`
+	IsDev                 bool                   `json:"isDev" xml:"isDev" form:"isDev"`
 	Http                  *struct {
 		JwtSecret           *string                 `json:"jwtSecret,omitempty" xml:"jwtSecret,omitempty" form:"jwtSecret,omitempty"`
 		JwtPublicKey        *string                 `json:"jwtPublicKey,omitempty" xml:"jwtPublicKey,omitempty" form:"jwtPublicKey,omitempty"`
@@ -104,8 +105,13 @@ type ProjectConfigOptions struct {
 		Compression         *HttpCompressionOptions `json:"compression,omitempty" xml:"compression,omitempty" form:"compression,omitempty"`
 		AdminCors           *string                 `json:"adminCors,omitempty" xml:"adminCors,omitempty" form:"adminCors,omitempty"`
 		AuthMethodsPerActor map[string][]string     `json:"authMethodsPerActor,omitempty" xml:"authMethodsPerActor,omitempty" form:"authMethodsPerActor,omitempty"`
+		AutoCert            *struct {
+			CacheDir      *string  `json:"cacheDir,omitempty"`
+			HostWhitelist []string `json:"hostWhitelist,omitempty"`
+			Email         *string  `json:"email,omitempty"`
+		} `json:"autoCert,omitempty"`
 	} `json:"http,omitempty" xml:"http,omitempty" form:"http,omitempty"`
-	Cloud *PalmTreeCloudOptions `json:"cloud,omitempty" xml:"cloud,omitempty" form:"cloud,omitempty"`
+	Cloud *KeelCloudOptions `json:"cloud,omitempty" xml:"cloud,omitempty" form:"cloud,omitempty"`
 }
 
 type ConfigModule struct {
