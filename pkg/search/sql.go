@@ -404,6 +404,10 @@ func (q *SelectQuery) All(dest any) error {
 	}
 
 	rows := applyQueryRows(q)
+	return scanQueryRows(dest, rows)
+}
+
+func scanQueryRows(dest any, rows []Params) error {
 	rv := reflect.ValueOf(dest)
 	if rv.Kind() != reflect.Pointer || rv.Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("destination must be a pointer to slice")

@@ -2,11 +2,11 @@ package search
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/lumm2509/keel/pkg/inflector"
-	"github.com/lumm2509/keel/pkg/list"
 )
 
 type NullFallbackPreference int
@@ -62,9 +62,26 @@ type FieldResolver interface {
 // Each `allowedFields` could be a plain string (eg. "name")
 // or a regexp pattern (eg. `^\w+[\w\.]*$`).
 func NewSimpleFieldResolver(allowedFields ...string) *SimpleFieldResolver {
-	return &SimpleFieldResolver{
+	r := &SimpleFieldResolver{
 		allowedFields: allowedFields,
+		exactFields:   make(map[string]struct{}, len(allowedFields)),
+		regexFields:   make([]*regexp.Regexp, 0),
 	}
+
+	for _, field := range allowedFields {
+		isRegex := strings.HasPrefix(field, "^") && strings.HasSuffix(field, "$")
+		if !isRegex {
+			r.exactFields[field] = struct{}{}
+			continue
+		}
+
+		pattern, err := regexp.Compile(field)
+		if err == nil {
+			r.regexFields = append(r.regexFields, pattern)
+		}
+	}
+
+	return r
 }
 
 // SimpleFieldResolver defines a generic search resolver that allows
@@ -73,6 +90,8 @@ func NewSimpleFieldResolver(allowedFields ...string) *SimpleFieldResolver {
 // If `allowedFields` are empty no fields filtering is applied.
 type SimpleFieldResolver struct {
 	allowedFields []string
+	exactFields   map[string]struct{}
+	regexFields   []*regexp.Regexp
 }
 
 // UpdateQuery implements `search.UpdateQuery` interface.
@@ -85,8 +104,19 @@ func (r *SimpleFieldResolver) UpdateQuery(query *SelectQuery) error {
 //
 // Returns error if `field` is not in `r.allowedFields`.
 func (r *SimpleFieldResolver) Resolve(field string) (*ResolverResult, error) {
-	if !list.ExistInSliceWithRegex(field, r.allowedFields) {
-		return nil, fmt.Errorf("failed to resolve field %q", field)
+	if len(r.allowedFields) > 0 {
+		if _, ok := r.exactFields[field]; !ok {
+			var matched bool
+			for _, pattern := range r.regexFields {
+				if pattern.MatchString(field) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, fmt.Errorf("failed to resolve field %q", field)
+			}
+		}
 	}
 
 	parts := strings.Split(field, ".")

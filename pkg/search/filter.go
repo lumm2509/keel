@@ -25,9 +25,16 @@ import (
 //	expr, err := filter.BuildExpr(resolver, Params{"min": 100, "max": 200})
 type FilterData string
 
+type parsedFilterTemplate struct {
+	exprGroups   []fexpr.ExprGroup
+	placeholders map[string]struct{}
+}
+
 // parsedFilterData holds a cache with previously parsed filter data expressions
 // (initialized with some preallocated empty data map)
-var parsedFilterData = store.New(make(map[string][]fexpr.ExprGroup, 50))
+var parsedFilterData = store.New(make(map[string]*parsedFilterTemplate, 50))
+
+const filterPlaceholderTokenPrefix = "__keel_filter_param__:"
 
 // BuildExpr parses the current filter data and returns a new db WHERE expression.
 //
@@ -52,36 +59,57 @@ func (f FilterData) BuildExprWithLimit(
 	maxExpressions int,
 	placeholderReplacements ...Params,
 ) (Expression, error) {
-	raw := string(f)
+	rawFilter := string(f)
+	if !strings.Contains(rawFilter, "{:") {
+		return buildFilterExprFromRaw(rawFilter, fieldResolver, maxExpressions)
+	}
 
-	// replace the placeholder params in the raw string filter
+	replacements := make(map[string]string)
+	rawValues := make(map[string]any)
 	for _, p := range placeholderReplacements {
 		for key, value := range p {
-			var replacement string
-			switch v := value.(type) {
-			case nil:
-				replacement = "null"
-			case bool, float64, float32, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8:
-				replacement = cast.ToString(v)
-			default:
-				replacement = cast.ToString(v)
-
-				// try to json serialize as fallback
-				if replacement == "" {
-					raw, _ := json.Marshal(v)
-					replacement = string(raw)
-				}
-
-				replacement = strconv.Quote(replacement)
+			if _, ok := replacements[key]; ok {
+				continue
 			}
-			raw = strings.ReplaceAll(raw, "{:"+key+"}", replacement)
+			replacements[key] = stringifyFilterReplacement(value)
+			rawValues[key] = value
 		}
 	}
 
+	cacheKey := rawFilter + "/" + strconv.Itoa(maxExpressions)
+
+	if data, ok := parsedFilterData.GetOk(cacheKey); ok && containsAllFilterPlaceholders(data.placeholders, rawValues) {
+		cloned := cloneFilterExprGroups(data.exprGroups)
+		replaceFilterPlaceholderTokens(cloned, rawValues)
+		return buildParsedFilterExpr(cloned, fieldResolver, &maxExpressions)
+	}
+
+	templateRaw, templatePlaceholders := replaceFilterPlaceholdersWithTokens(rawFilter)
+	if len(templatePlaceholders) > 0 && containsAllFilterPlaceholders(templatePlaceholders, rawValues) {
+		data, err := fexpr.Parse(templateRaw)
+		if err != nil {
+			return nil, err
+		}
+
+		parsedFilterData.SetIfLessThanLimit(cacheKey, &parsedFilterTemplate{
+			exprGroups:   data,
+			placeholders: templatePlaceholders,
+		}, 500)
+
+		cloned := cloneFilterExprGroups(data)
+		replaceFilterPlaceholderTokens(cloned, rawValues)
+		return buildParsedFilterExpr(cloned, fieldResolver, &maxExpressions)
+	}
+
+	raw := replaceFilterPlaceholders(rawFilter, replacements)
+	return buildFilterExprFromRaw(raw, fieldResolver, maxExpressions)
+}
+
+func buildFilterExprFromRaw(raw string, fieldResolver FieldResolver, maxExpressions int) (Expression, error) {
 	cacheKey := raw + "/" + strconv.Itoa(maxExpressions)
 
 	if data, ok := parsedFilterData.GetOk(cacheKey); ok {
-		return buildParsedFilterExpr(data, fieldResolver, &maxExpressions)
+		return buildParsedFilterExpr(cloneFilterExprGroups(data.exprGroups), fieldResolver, &maxExpressions)
 	}
 
 	data, err := fexpr.Parse(raw)
@@ -98,9 +126,220 @@ func (f FilterData) BuildExprWithLimit(
 
 	// store in cache
 	// (the limit size is arbitrary and it is there to prevent the cache growing too big)
-	parsedFilterData.SetIfLessThanLimit(cacheKey, data, 500)
+	parsedFilterData.SetIfLessThanLimit(cacheKey, &parsedFilterTemplate{exprGroups: data}, 500)
 
 	return buildParsedFilterExpr(data, fieldResolver, &maxExpressions)
+}
+
+func stringifyFilterReplacement(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return "null"
+	case bool, float64, float32, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8:
+		return cast.ToString(v)
+	default:
+		replacement := cast.ToString(v)
+		if replacement == "" {
+			raw, _ := json.Marshal(v)
+			replacement = string(raw)
+		}
+
+		return strconv.Quote(replacement)
+	}
+}
+
+func replaceFilterPlaceholdersWithTokens(raw string) (string, map[string]struct{}) {
+	if !strings.Contains(raw, "{:") {
+		return raw, nil
+	}
+
+	placeholders := make(map[string]struct{})
+	result := replaceFilterPlaceholders(raw, map[string]string{}, func(key string) string {
+		placeholders[key] = struct{}{}
+		return strconv.Quote(filterPlaceholderTokenPrefix + key)
+	})
+
+	return result, placeholders
+}
+
+func replaceFilterPlaceholders(raw string, replacements map[string]string, fallbackReplacer ...func(string) string) string {
+	if len(replacements) == 0 && len(fallbackReplacer) == 0 || !strings.Contains(raw, "{:") {
+		return raw
+	}
+
+	var fallback func(string) string
+	if len(fallbackReplacer) > 0 {
+		fallback = fallbackReplacer[0]
+	}
+
+	var result strings.Builder
+	result.Grow(len(raw))
+
+	for i := 0; i < len(raw); {
+		if raw[i] != '{' || i+1 >= len(raw) || raw[i+1] != ':' {
+			result.WriteByte(raw[i])
+			i++
+			continue
+		}
+
+		end := strings.IndexByte(raw[i+2:], '}')
+		if end < 0 {
+			result.WriteByte(raw[i])
+			i++
+			continue
+		}
+
+		end += i + 2
+		key := raw[i+2 : end]
+		if replacement, ok := replacements[key]; ok {
+			result.WriteString(replacement)
+		} else if fallback != nil {
+			result.WriteString(fallback(key))
+		} else {
+			result.WriteString(raw[i : end+1])
+		}
+		i = end + 1
+	}
+
+	return result.String()
+}
+
+func containsAllFilterPlaceholders(expected map[string]struct{}, values map[string]any) bool {
+	for key := range expected {
+		if _, ok := values[key]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func cloneFilterExprGroups(groups []fexpr.ExprGroup) []fexpr.ExprGroup {
+	cloned := make([]fexpr.ExprGroup, len(groups))
+
+	for i, group := range groups {
+		cloned[i].Join = group.Join
+		switch item := group.Item.(type) {
+		case fexpr.Expr:
+			cloned[i].Item = cloneFilterExpr(item)
+		case fexpr.ExprGroup:
+			cloned[i].Item = cloneFilterExprGroup(item)
+		case []fexpr.ExprGroup:
+			cloned[i].Item = cloneFilterExprGroups(item)
+		default:
+			cloned[i].Item = item
+		}
+	}
+
+	return cloned
+}
+
+func cloneFilterExprGroup(group fexpr.ExprGroup) fexpr.ExprGroup {
+	cloned := fexpr.ExprGroup{Join: group.Join}
+	switch item := group.Item.(type) {
+	case fexpr.Expr:
+		cloned.Item = cloneFilterExpr(item)
+	case fexpr.ExprGroup:
+		cloned.Item = cloneFilterExprGroup(item)
+	case []fexpr.ExprGroup:
+		cloned.Item = cloneFilterExprGroups(item)
+	default:
+		cloned.Item = item
+	}
+
+	return cloned
+}
+
+func cloneFilterExpr(expr fexpr.Expr) fexpr.Expr {
+	expr.Left = cloneFilterToken(expr.Left)
+	expr.Right = cloneFilterToken(expr.Right)
+	return expr
+}
+
+func cloneFilterToken(token fexpr.Token) fexpr.Token {
+	cloned := token
+	args, ok := token.Meta.([]fexpr.Token)
+	if ok {
+		clonedArgs := make([]fexpr.Token, len(args))
+		for i, arg := range args {
+			clonedArgs[i] = cloneFilterToken(arg)
+		}
+		cloned.Meta = clonedArgs
+	}
+	return cloned
+}
+
+func replaceFilterPlaceholderTokens(groups []fexpr.ExprGroup, values map[string]any) {
+	for i := range groups {
+		switch item := groups[i].Item.(type) {
+		case fexpr.Expr:
+			groups[i].Item = replaceFilterPlaceholderExpr(item, values)
+		case fexpr.ExprGroup:
+			groups[i].Item = replaceFilterPlaceholderGroup(item, values)
+		case []fexpr.ExprGroup:
+			replaceFilterPlaceholderTokens(item, values)
+			groups[i].Item = item
+		}
+	}
+}
+
+func replaceFilterPlaceholderGroup(group fexpr.ExprGroup, values map[string]any) fexpr.ExprGroup {
+	switch item := group.Item.(type) {
+	case fexpr.Expr:
+		group.Item = replaceFilterPlaceholderExpr(item, values)
+	case fexpr.ExprGroup:
+		group.Item = replaceFilterPlaceholderGroup(item, values)
+	case []fexpr.ExprGroup:
+		replaceFilterPlaceholderTokens(item, values)
+		group.Item = item
+	}
+	return group
+}
+
+func replaceFilterPlaceholderExpr(expr fexpr.Expr, values map[string]any) fexpr.Expr {
+	expr.Left = replaceFilterPlaceholderToken(expr.Left, values)
+	expr.Right = replaceFilterPlaceholderToken(expr.Right, values)
+	return expr
+}
+
+func replaceFilterPlaceholderToken(token fexpr.Token, values map[string]any) fexpr.Token {
+	if token.Type == fexpr.TokenText && strings.HasPrefix(token.Literal, filterPlaceholderTokenPrefix) {
+		name := strings.TrimPrefix(token.Literal, filterPlaceholderTokenPrefix)
+		if value, ok := values[name]; ok {
+			return filterValueToToken(value)
+		}
+	}
+
+	if args, ok := token.Meta.([]fexpr.Token); ok {
+		clonedArgs := make([]fexpr.Token, len(args))
+		for i, arg := range args {
+			clonedArgs[i] = replaceFilterPlaceholderToken(arg, values)
+		}
+		token.Meta = clonedArgs
+	}
+
+	return token
+}
+
+func filterValueToToken(value any) fexpr.Token {
+	switch v := value.(type) {
+	case nil:
+		return fexpr.Token{Literal: "null", Type: fexpr.TokenIdentifier}
+	case bool:
+		if v {
+			return fexpr.Token{Literal: "true", Type: fexpr.TokenIdentifier}
+		}
+		return fexpr.Token{Literal: "false", Type: fexpr.TokenIdentifier}
+	case float64, float32, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8:
+		return fexpr.Token{Literal: cast.ToString(v), Type: fexpr.TokenNumber}
+	default:
+		literal := cast.ToString(v)
+		if literal == "" {
+			raw, _ := json.Marshal(v)
+			literal = string(raw)
+		}
+		return fexpr.Token{Literal: literal, Type: fexpr.TokenText}
+	}
 }
 
 func buildParsedFilterExpr(data []fexpr.ExprGroup, fieldResolver FieldResolver, maxExpressions *int) (Expression, error) {

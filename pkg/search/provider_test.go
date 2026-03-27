@@ -297,10 +297,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			false,
 			`{"items":[{"test1":1,"test2":"test2.1","test3":""},{"test1":2,"test2":"test2.2","test3":""}],"page":1,"perPage":10,"totalItems":2,"totalPages":1}`,
-			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 10",
-			},
+			[]string{"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC"},
 		},
 		{
 			"perPage normalization",
@@ -311,10 +308,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			false,
 			`{"items":[],"page":10,"perPage":30,"totalItems":2,"totalPages":1}`,
-			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 30 OFFSET 270",
-			},
+			[]string{"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC"},
 		},
 		{
 			"invalid sort field",
@@ -347,10 +341,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":1,"perPage":` + fmt.Sprint(MaxPerPage) + `,"totalItems":1,"totalPages":1}`,
-			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2)",
-				"SELECT * FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY `test1` ASC, `test2` DESC LIMIT " + fmt.Sprint(MaxPerPage),
-			},
+			[]string{"SELECT * FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY `test1` ASC, `test2` DESC"},
 		},
 		{
 			"valid sort and filter fields (skipTotal=1)",
@@ -374,10 +365,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			false,
 			`{"items":[],"page":1,"perPage":10,"totalItems":0,"totalPages":0}`,
-			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL)))",
-				"SELECT * FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL))) ORDER BY `test1` ASC, `test3` ASC LIMIT 10",
-			},
+			[]string{"SELECT * FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL))) ORDER BY `test1` ASC, `test3` ASC"},
 		},
 		{
 			"valid sort and filter fields (zero results; skipTotal=1)",
@@ -401,10 +389,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":2,"perPage":1,"totalItems":2,"totalPages":2}`,
-			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 1 OFFSET 1",
-			},
+			[]string{"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC"},
 		},
 		{
 			"pagination test (skipTotal=1)",
@@ -597,6 +582,38 @@ func TestProviderFilterAndSortLimits(t *testing.T) {
 	}
 }
 
+func TestProviderExecDistinctCountCol(t *testing.T) {
+	testDB := testDB{DB: NewDB()}
+	defer testDB.Close()
+
+	testDB.CreateTable("test", map[string]string{
+		"id":    "int default 0",
+		"test1": "int default 0",
+		"test2": "text default ''",
+	}).Execute()
+	testDB.Insert("test", Params{"id": 1, "test1": 1, "test2": "a"}).Execute()
+	testDB.Insert("test", Params{"id": 1, "test1": 2, "test2": "b"}).Execute()
+	testDB.Insert("test", Params{"id": 2, "test1": 3, "test2": "c"}).Execute()
+
+	query := testDB.Select("*").From("test").OrderBy("test1 ASC")
+	result, err := NewProvider(&testFieldResolver{}).
+		Query(query).
+		CountCol("id").
+		Page(1).
+		PerPage(10).
+		Exec(&[]testTableStruct{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.TotalItems != 2 {
+		t.Fatalf("Expected distinct totalItems 2, got %d", result.TotalItems)
+	}
+	if result.TotalPages != 1 {
+		t.Fatalf("Expected totalPages 1, got %d", result.TotalPages)
+	}
+}
+
 func TestProviderParseAndExec(t *testing.T) {
 	testDB, err := createTestDB()
 	if err != nil {
@@ -704,10 +721,7 @@ func TestProviderParseAndExec(t *testing.T) {
 				t.Fatalf("Expected resolver.Update to be called %d, got %d", 1, testResolver.UpdateQueryCalls)
 			}
 
-			expectedQueries := 2
-			if provider.skipTotal {
-				expectedQueries = 1
-			}
+			expectedQueries := 1
 
 			if len(testDB.CalledQueries) != expectedQueries {
 				t.Fatalf("Expected %d db queries, got %d: \n%v", expectedQueries, len(testDB.CalledQueries), testDB.CalledQueries)

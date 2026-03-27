@@ -1,15 +1,14 @@
 package search
 
 import (
+	"context"
 	"errors"
-	"math"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 
-	"github.com/lumm2509/keel/pkg/dbutils"
 	"github.com/lumm2509/keel/pkg/inflector"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -289,40 +288,8 @@ func (s *Provider) Exec(items any) (*Result, error) {
 		s.perPage = MaxPerPage
 	}
 
-	// negative value to differentiate from the zero default
 	totalCount := -1
 	totalPages := -1
-
-	// prepare a count query from the base one
-	countQuery := modelsQuery // shallow clone
-	countExec := func() error {
-		queryInfo := countQuery.Info()
-		countCol := s.countCol
-
-		if len(queryInfo.From) > 0 {
-			firstFrom := dbutils.AliasOrIdentifier(queryInfo.From[0])
-			countCol = firstFrom + "." + countCol
-		}
-
-		// @todo while currently there is no such use case, evaluate if
-		// wrapping as a subquery would be more suitable for the cases
-		// when there is "Group By" different from the default deduplication one
-		// added by RecordFieldResolver.UpdateQuery
-
-		// note: countQuery is shallow cloned and slice/map in-place modifications should be avoided
-		err := countQuery.Distinct(false).
-			Select("COUNT(DISTINCT [[" + countCol + "]])").
-			GroupBy( /* reset */ ).
-			OrderBy( /* reset */ ).
-			Row(&totalCount)
-		if err != nil {
-			return err
-		}
-
-		totalPages = int(math.Ceil(float64(totalCount) / float64(s.perPage)))
-
-		return nil
-	}
 
 	// apply pagination to the original query and fetch the models
 	modelsExec := func() error {
@@ -333,11 +300,11 @@ func (s *Provider) Exec(items any) (*Result, error) {
 	}
 
 	if !s.skipTotal {
-		// execute the 2 queries concurrently
-		errg := new(errgroup.Group)
-		errg.Go(countExec)
-		errg.Go(modelsExec)
-		if err := errg.Wait(); err != nil {
+		if modelsQuery.db != nil {
+			if err := s.execSinglePass(&modelsQuery, items, &totalCount, &totalPages); err != nil {
+				return nil, err
+			}
+		} else if err := modelsExec(); err != nil {
 			return nil, err
 		}
 	} else {
@@ -355,6 +322,69 @@ func (s *Provider) Exec(items any) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+func (s *Provider) execSinglePass(modelsQuery *SelectQuery, items any, totalCount *int, totalPages *int) error {
+	baseQuery := modelsQuery.clone()
+	baseQuery.limit = nil
+	baseQuery.offset = nil
+
+	if baseQuery.db != nil && baseQuery.db.QueryLogFunc != nil {
+		baseQuery.db.QueryLogFunc(context.Background(), 0, baseQuery.Build().SQL(), nil, nil)
+	}
+
+	rows := applyQueryRows(baseQuery)
+	*totalCount = countDistinctRows(rows, s.countCol)
+	if s.perPage > 0 {
+		*totalPages = (*totalCount + s.perPage - 1) / s.perPage
+	} else {
+		*totalPages = 0
+	}
+
+	start := s.perPage * (s.page - 1)
+	if start > len(rows) {
+		start = len(rows)
+	}
+	end := start + s.perPage
+	if end > len(rows) {
+		end = len(rows)
+	}
+
+	return scanQueryRows(items, rows[start:end])
+}
+
+func countDistinctRows(rows []Params, countCol string) int {
+	if len(rows) == 0 {
+		return 0
+	}
+
+	key := normalizeCountColumn(countCol)
+	seen := make(map[string]struct{}, len(rows))
+
+	for _, row := range rows {
+		value, ok := row[key]
+		if !ok {
+			value = row[countCol]
+		}
+		seen[distinctCountKey(value)] = struct{}{}
+	}
+
+	return len(seen)
+}
+
+func normalizeCountColumn(countCol string) string {
+	countCol = strings.Trim(countCol, "`[] ")
+	if idx := strings.LastIndex(countCol, "."); idx >= 0 {
+		countCol = countCol[idx+1:]
+	}
+	return countCol
+}
+
+func distinctCountKey(value any) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%T:%v", value, value)
 }
 
 // ParseAndExec is a short convenient method to trigger both
