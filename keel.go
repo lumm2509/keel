@@ -132,31 +132,39 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 	executableName := filepath.Base(os.Args[0])
 	builtConfig := resolveAppConfig(options...)
 
+	rootCmd := &cobra.Command{
+		Use:     executableName,
+		Short:   executableName + " CLI",
+		Version: Version,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
+		SilenceUsage: true,
+	}
+
 	app := &App[Cradle]{
 		container:       builtConfig.container,
 		config:          builtConfig.config,
 		bindRoutes:      builtConfig.bindRoutes,
 		hmr:             builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
-		rootCmd: &cobra.Command{
-			Use:     executableName,
-			Short:   executableName + " CLI",
-			Version: Version,
-			CompletionOptions: cobra.CompletionOptions{
-				DisableDefaultCmd: true,
-			},
-			SilenceUsage: true,
+		rootCmd:         rootCmd,
+	}
+
+	requestEventPool := sync.Pool{
+		New: func() any {
+			return &transporthttp.RequestEvent[Cradle]{}
 		},
 	}
 
 	app.router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
-		return &transporthttp.RequestEvent[Cradle]{
-			Container: app.container,
-			Event: transporthttp.Event{
-				Response: w,
-				Request:  r,
-			},
-		}, nil
+		event := requestEventPool.Get().(*transporthttp.RequestEvent[Cradle])
+		event.Reset(app.container, w, r)
+
+		return event, func() {
+			event.Release()
+			requestEventPool.Put(event)
+		}
 	})
 
 	app.rootCmd.SetErr(newErrWriter())
