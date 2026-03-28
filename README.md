@@ -1,229 +1,168 @@
 <p align="center">
-    <a href="https://github.com/lumm2509/keel" target="_blank" rel="noopener">
-        <img src=".github/gopher-keel.png" alt="keel - backend toolkit for Go" />
-    </a>
+  <a href="https://github.com/lumm2509/keel" target="_blank" rel="noopener">
+    <img src=".github/gopher-keel.png" alt="keel" />
+  </a>
 </p>
 
 # keel
 
-`keel` is a Go backend toolkit for building HTTP APIs around a typed app container, explicit request events, and a small routing facade.
+`keel` is the Go backend base I got tired of rebuilding over and over.
 
-The short version: you can start with `keel.New(...)`, register routes, and run a server without wiring everything by hand. The less short version: this is not trying to hide the underlying parts forever. The higher-level API is just a thinner entry point over `container`, `transport/http`, and the hook layer.
+It is not trying to be the new everything-framework, and it is definitely not pretending to solve every backend problem known to mankind.
+What it **does** try to give me is a sane starting point for real apps: typed app state, HTTP routing, request context, lifecycle hooks, and shared runtime capabilities without scaffolding the same junk every single time.
 
-It fits when you want:
+A lot of this exists for a very simple reason: I use it.
+Some parts are core, some are experimental, and some are here because they are useful even if they are not part of the main pitch yet.
 
-- typed app dependencies in handlers
-- a simple HTTP entry point
-- the option to drop into lower-level pieces without rewriting everything
+---
 
-It does not fit when you want:
+## The normal path
 
-- a finished full-stack framework
-- a frozen public API
-- a toolkit that protects you from every bad architectural decision
+If you're using `keel` the normal way, the flow is:
 
-## What This Actually Is
+`New -> register routes -> Run`
 
-The right mental model is:
-
-- `keel.App[C]` is the main entry point for the common path
-- `Cradle` is your typed application dependency bundle
-- `container.Container[C]` holds shared app state and resources
-- `keel.Context[C]` is really a `container.RequestEvent[C]`
-- routing and middleware execution are built on top of `transport/http`
-- lifecycle events are handled through the hook layer
-
-So this is not a giant abstraction layer. It is closer to a set of backend building blocks with a convenient facade on top.
-
-What it abstracts:
-
-- app bootstrap and shutdown flow
-- route registration
-- typed handler access to app dependencies
-- a base container with logger, store, cron, subscriptions, and optional DB
-
-What it does not abstract:
-
-- your domain model
-- your module boundaries
-- persistence design
-- production operations
-- the need to understand regular Go HTTP behavior
-
-## What It Is Not
-
-- Not a magic framework.
-- Not a DI system with deep wiring rules.
-- Not a replacement for understanding `net/http`.
-- Not a complete backend product with admin, auth, data model, and ops already solved.
-- Not stable enough yet to pretend everything public is final.
-
-## Design Choices
-
-### Keep the common path simple
-
-The top-level API is intentionally small:
-
-- `keel.New(...)`
-- `app.Use(...)`
-- `app.Get(...)`
-- `app.Run()`
-
-This is the fast path. It exists because writing the same setup code over and over is boring.
-
-### Keep the lower-level parts public
-
-If you need more control, the lower-level packages are still there:
-
-- `container`
-- `transport/http`
-- the hook layer
-- `apis`
-
-This optimizes for control and inspectability over a perfectly polished surface. The trade-off is that the public API boundary is not especially strict yet.
-
-### Use explicit flow in hooks and middleware
-
-Hook and middleware chains advance via `e.Next()`.
-
-That is deliberate. It keeps execution order obvious and avoids hidden control flow. It also means forgetting `Next()` can stop a chain in ways that are technically correct and operationally annoying.
-
-### Stay close to the stdlib
-
-The server is `http.Server`, routing is based on `http.ServeMux`, and the project does not try to invent a separate universe for HTTP.
-
-That keeps the system easier to reason about, but it also means you inherit the normal stdlib constraints.
-
-## System Invariants
-
-Read this before changing core behavior:
-
-- Do not mix the route facade (`app.Get`, `app.Use`, etc.) with `BindRoutes`. The app rejects that combination.
-- Do not expect the app to run without routes. If neither facade routes nor `BindRoutes` are provided, `develop` fails.
-- Do not break the `bootstrap -> serve -> terminate` lifecycle assumptions unless you are intentionally redesigning startup behavior.
-- Do not forget that hook and middleware execution is manual-chain based. `Next()` is not optional if you want the chain to continue.
-- Do not assume the container always has a DB. `DataBase()` may be `nil`, and that is a valid state.
-- Do not treat `ConfigModule` as an architectural layer. It is just a config aggregate.
-- Do not casually change middleware or hook ordering. Priority and registration order matter.
-- Do not break `RequestEvent` behavior unless you want to chase logging, request parsing, and route metadata regressions afterward.
-- Do not remove the router catch-all behavior lightly. It exists so group middleware still runs on not-found paths.
-
-## How To Think About It
-
-Use this split:
-
-1. `keel.App`, `keel.Context`, `keel.Group` for the normal app path.
-2. `container` for shared app state and resources.
-3. `transport/http` and the hook layer for lower-level composition.
-
-If you are extending the project:
-
-- add behavior at the lowest layer that actually owns the problem
-- only expose it through `App` if it improves the common path
-- avoid turning `App` into a bag of special cases
-
-Common ways to make a mess:
-
-- putting domain logic into middleware because it is convenient
-- turning `Cradle` into a global junk drawer
-- assuming config and resources are always fully present
-- changing hook flow without understanding who calls `Next()`
-
-## Minimal Example
+That's the main story.
+Not because every other path is illegal, but because frameworks get stupid fast when they try to have 4 "official" ways of doing the same thing.
 
 ```go
 package main
 
 import (
-	"log"
-	"net/http"
+    "log"
+    "net/http"
 
-	"github.com/lumm2509/keel"
+    "github.com/lumm2509/keel"
 )
 
 type Cradle struct {
-	Name string
+    Name string
 }
 
 func main() {
-	app := keel.New(
-		keel.WithCradle(Cradle{Name: "example"}),
-	)
+    app := keel.New(
+        keel.WithCradle(Cradle{Name: "myapp"}),
+    )
 
-	app.Use(func(c *keel.Context[Cradle]) error {
-		c.Set("scope", "public")
-		return c.Next()
-	})
+    app.Use(func(c *keel.Context[Cradle]) error {
+        c.Set("scope", "public")
+        return c.Next()
+    })
 
-	app.Get("/health", func(c *keel.Context[Cradle]) error {
-		return c.JSON(http.StatusOK, map[string]any{
-			"ok":    true,
-			"name":  c.Cradle().Name,
-			"scope": c.Get("scope"),
-			"hasDB": c.Container.DataBase() != nil,
-		})
-	})
+    app.Get("/health", func(c *keel.Context[Cradle]) error {
+        return c.JSON(http.StatusOK, map[string]any{
+            "ok":   true,
+            "name": c.Cradle().Name,
+        })
+    })
 
-	if err := app.Run(); err != nil {
-		log.Fatal(err)
-	}
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
-For a slightly larger example, see `example/main.go`.
+---
 
-## Project Status
+## What this actually is
 
-Current status: experimental.
+At its core, `keel` is built around a few things:
 
-Things that look reasonably solid:
+* a typed dependency bundle (`Cradle`)
+* an app/container boundary
+* a request event/context
+* lifecycle hooks
+* a small HTTP facade on top of stdlib-first plumbing
 
-- the basic `App + Cradle + Container + Router` shape
-- the hook implementation
-- the HTTP transport layer
-- several utility and infrastructure packages
+That is the useful part.
 
-Things still in motion:
+Everything else in the repo falls into one of these buckets:
 
-- the final public API shape
-- consistency between the top-level package and lower-level packages
-- documentation
-- cleanup of older naming and repo history
+* core
+* useful but not central
+* experimental
+* legacy / still being figured out because this started as a fork and I am not going to pretend otherwise
 
-Things that may still be broken or half-finished:
+---
 
-- some integration points across the full repo
-- parts of the public surface that are still being aligned
-- leftover assumptions from earlier iterations of the project
+## What this is not
 
-This repository is not at the stage where “public” automatically means “settled”.
+This is **not**:
 
-## Contributing
+* a BaaS
+* an admin panel
+* an auth platform
+* a plugin marketplace
+* a magical architecture cure for bad decisions
+* a purity project made to impress framework tourists on the internet
 
-Useful contributions:
+It is a reusable Go backend base meant to save real setup time.
 
-- targeted fixes with clear scope
-- tests for actual request flow and hook behavior
-- docs that explain real constraints and trade-offs
-- cleanup that reduces confusion between the facade and the lower-level APIs
+---
 
-Likely bad contributions:
+## Core packages
 
-- adding another abstraction layer without solving a concrete problem
-- large feature additions on top of unstable core behavior
-- PRs that make the API broader without making the system clearer
-- documentation that sells the project harder than the code can support
+These are the parts that matter most:
 
-If you touch hooks, routing, or container behavior, explain the full execution impact. If you change public API, explain the trade-off. If a change mostly increases surface area, it probably needs a better reason.
+| Package          | Status   | Why it exists                            |
+| ---------------- | -------- | ---------------------------------------- |
+| `keel`           | core     | main app facade and lifecycle entrypoint |
+| `transport/http` | core     | HTTP routing/runtime plumbing            |
+| `runtime/hook`   | core     | hook chain and lifecycle composition     |
+| `container`      | core     | shared app/runtime resources             |
+| `config`         | core-ish | runtime config the app actually uses     |
+| `infra/store`    | core-ish | shared in-memory/runtime state           |
+| `infra/database` | core-ish | DB integration used across apps          |
 
-## Local Development
+---
 
-Useful commands:
+## Useful, but not the main pitch
 
-```sh
-make test
-make lint
-go run ./example
-```
+These stay because they are useful for actual development, not because I need them to look elegant in a README.
 
-Just do not assume the existence of a command means the whole repo is already polished. It is not there yet.
+| Package            | Status       | Notes                                            |
+| ------------------ | ------------ | ------------------------------------------------ |
+| `dal`              | experimental | useful direction, not part of the main story yet |
+| `dml`              | experimental | same deal                                        |
+| `infra/filesystem` | experimental | important in real projects, not core-facing yet  |
+| `transport/grpc`   | experimental | I use gRPC, so yes, it stays                     |
+| `transport/ws`     | experimental | same for WebSockets                              |
+| `runtime/cron`     | supporting   | useful runtime capability                        |
+| `commands`         | supporting   | CLI/runtime helpers                              |
+| `apis`             | supporting   | internal serving composition                     |
+
+---
+
+## Invariants
+
+These are the parts that will bite you if you ignore them.
+
+* The normal route registration path is the facade. If something lower-level exists, that does **not** automatically make it part of the main public story.
+* Hook and middleware flow is manual-chain based. If you do not call `Next()`, the chain does not continue. Revolutionary, I know.
+* The container is app/runtime scope, not an excuse to turn every handler into a dependency landfill.
+* `ConfigModule` is not supposed to become a trash bag for every feature that might someday exist.
+* Not every capability in the repo is equally public, equally stable, or equally important. That is intentional.
+
+---
+
+## Why some things are experimental
+
+Because I would rather keep a useful capability around and be honest that it is still settling, than cut it just to make the repo look artificially clean.
+
+Some things here are not “finished.”
+That does **not** automatically mean they are mistakes.
+Sometimes it just means they are useful, real, and not fully locked yet.
+
+---
+
+## Extension philosophy
+
+`keel` should have one normal path and a few intentional escape hatches.
+
+That means:
+
+* the facade is the normal path
+* lower-level packages exist on purpose
+* not every lower-level package is part of the README headline
+* flexibility is good
+* ambiguity is not
