@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
 	"net"
 	stdhttp "net/http"
 	"os"
@@ -20,7 +19,6 @@ import (
 	"github.com/lumm2509/keel/commands"
 	"github.com/lumm2509/keel/config"
 	"github.com/lumm2509/keel/container"
-	"github.com/lumm2509/keel/pkg/list"
 	"github.com/lumm2509/keel/runtime/hook"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 	"github.com/spf13/cobra"
@@ -29,7 +27,7 @@ import (
 
 var Version = "(untracked)"
 
-type BindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error)
+type BindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error)
 type HMRFunc func(context.Context) error
 type ServeConfig = apis.ServeConfig
 
@@ -47,7 +45,7 @@ type TerminateEvent[C any] struct {
 type ServeEvent[C any] struct {
 	hook.Event
 	Container   container.Container[C]
-	Router      *transporthttp.Router[*container.RequestEvent[C]]
+	Router      *transporthttp.Router[*transporthttp.RequestEvent[C]]
 	Server      *stdhttp.Server
 	CertManager *autocert.Manager
 	Listener    net.Listener
@@ -73,7 +71,7 @@ type App[Cradle any] struct {
 	bindRoutes      BindRoutesFunc[Cradle]
 	hmr             HMRFunc
 	hideStartBanner bool
-	router          *transporthttp.Router[*container.RequestEvent[Cradle]]
+	router          *transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
 	usesFacade      bool
 	onBootstrap     *hook.Hook[*BootstrapEvent[Cradle]]
 	onServe         *hook.Hook[*ServeEvent[Cradle]]
@@ -153,8 +151,8 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 		},
 	}
 
-	app.router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*container.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
-		return &container.RequestEvent[Cradle]{
+	app.router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
+		return &transporthttp.RequestEvent[Cradle]{
 			Container: app.container,
 			Event: transporthttp.Event{
 				Response: w,
@@ -408,7 +406,7 @@ func (a *App[Cradle]) routeBinder() BindRoutesFunc[Cradle] {
 		return a.bindRoutes
 	}
 
-	return func(container.Container[Cradle]) (*transporthttp.Router[*container.RequestEvent[Cradle]], error) {
+	return func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error) {
 		return a.router, nil
 	}
 }
@@ -441,47 +439,11 @@ func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
 }
 
 func (a *App[Cradle]) serve(config ServeConfig) error {
-	config.AllowedOrigins = apis.AllowedOrigins(apis.HTTP(a.config), config.AllowedOrigins)
-
-	router, err := a.routeBinder()(a.container)
+	prepared, err := apis.PrepareServe(a.container, a.config, config, a.routeBinder())
 	if err != nil {
 		return err
 	}
-
-	mainAddr := config.HttpAddr
-	if config.HttpsAddr != "" {
-		mainAddr = config.HttpsAddr
-	}
-
-	hostNames, wwwRedirects := apis.HostNames(mainAddr, config.CertificateDomains)
-	if len(wwwRedirects) > 0 {
-		router.Bind(wwwRedirect[Cradle](wwwRedirects))
-	}
-
-	dataDir := ""
-	if provider, ok := any(a.container).(container.DataDirProvider); ok {
-		dataDir = provider.DataDir()
-	}
-	certManager, err := apis.CertManager(a.config, dataDir, hostNames)
-	if err != nil {
-		return err
-	}
-
-	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
-	defer cancelBaseCtx()
-
-	server := &stdhttp.Server{
-		WriteTimeout:      5 * time.Minute,
-		ReadTimeout:       5 * time.Minute,
-		ReadHeaderTimeout: 1 * time.Minute,
-		Addr:              mainAddr,
-		BaseContext: func(net.Listener) context.Context {
-			return baseCtx
-		},
-		ErrorLog: log.New(&serverErrorLogWriter[Cradle]{container: a.container}, "", 0),
-	}
-
-	server.TLSConfig = apis.TLSConfig(server.TLSConfig, certManager)
+	defer prepared.Close()
 
 	var listener net.Listener
 	var wg sync.WaitGroup
@@ -489,13 +451,13 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	a.OnTerminate().Bind(&hook.Handler[*TerminateEvent[Cradle]]{
 		Id: "keelGracefulShutdown",
 		Func: func(te *TerminateEvent[Cradle]) error {
-			cancelBaseCtx()
+			prepared.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 
 			wg.Add(1)
-			_ = server.Shutdown(ctx)
+			_ = prepared.Server.Shutdown(ctx)
 
 			if te.IsRestart {
 				time.AfterFunc(3*time.Second, func() { wg.Done() })
@@ -510,54 +472,38 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 
 	defer func() {
 		wg.Wait()
-		if listener != nil {
+		if listener != nil && listener != prepared.Listener {
 			_ = listener.Close()
 		}
 	}()
 
-	var baseURL string
-
 	serveEvent := &ServeEvent[Cradle]{
 		Container:   a.container,
-		Router:      router,
-		Server:      server,
-		CertManager: certManager,
+		Router:      prepared.Router,
+		Server:      prepared.Server,
+		CertManager: prepared.CertManager,
+		Listener:    prepared.Listener,
 	}
 
 	if err := a.OnServe().Trigger(serveEvent, func(e *ServeEvent[Cradle]) error {
-		handler, err := e.Router.BuildMux()
-		if err != nil {
-			return err
-		}
-
-		e.Server.Handler = apis.CORS(handler, config.AllowedOrigins)
-		baseURL = apis.BaseURL(config, e.Server.Addr)
-
-		addr := e.Server.Addr
-		if addr == "" {
-			if config.HttpsAddr != "" {
-				addr = ":https"
-			} else {
-				addr = ":http"
-			}
-		}
-
-		if e.Listener == nil {
-			listener, err = net.Listen("tcp", addr)
-			if err != nil {
-				return err
-			}
-		} else {
-			listener = e.Listener
-		}
-
-		return nil
+		return e.Next()
 	}); err != nil {
 		return err
 	}
 
+	prepared.Router = serveEvent.Router
+	prepared.Server = serveEvent.Server
+	prepared.CertManager = serveEvent.CertManager
+	prepared.Listener = serveEvent.Listener
+	listener = prepared.Listener
+
 	if listener == nil {
 		return errors.New("the OnServe listener was not initialized; did you forget to call e.Next()?")
+	}
+
+	baseURL := prepared.BaseURL
+	if prepared.Server != nil {
+		baseURL = apis.BaseURL(config, prepared.Server.Addr)
 	}
 
 	if config.ShowStartBanner {
@@ -573,14 +519,14 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	)
 
 	if config.HttpsAddr != "" {
-		if config.HttpAddr != "" && certManager != nil {
+		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
-				_ = stdhttp.ListenAndServe(config.HttpAddr, certManager.HTTPHandler(nil))
+				_ = stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil))
 			}()
 		}
-		err = serveEvent.Server.ServeTLS(listener, "", "")
+		err = prepared.Server.ServeTLS(listener, "", "")
 	} else {
-		err = serveEvent.Server.Serve(listener)
+		err = prepared.Server.Serve(listener)
 	}
 
 	if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
@@ -588,48 +534,6 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	}
 
 	return nil
-}
-
-type serverErrorLogWriter[Cradle any] struct {
-	container container.Container[Cradle]
-}
-
-func (s *serverErrorLogWriter[Cradle]) Write(p []byte) (int, error) {
-	s.container.Logger().Debug(strings.TrimSpace(string(p)))
-	return len(p), nil
-}
-
-func wwwRedirect[Cradle any](hosts []string) *hook.Handler[*container.RequestEvent[Cradle]] {
-	return &hook.Handler[*container.RequestEvent[Cradle]]{
-		Id: "wwwRedirect",
-		Func: func(e *container.RequestEvent[Cradle]) error {
-			if e.Request == nil || e.Request.URL == nil {
-				return e.Next()
-			}
-
-			host := e.Request.Host
-			if host == "" {
-				host = e.Request.URL.Host
-			}
-
-			if !list.ExistInSlice(host, hosts) {
-				return e.Next()
-			}
-
-			targetHost := strings.TrimPrefix(host, "www.")
-			target := *e.Request.URL
-			target.Host = targetHost
-			target.Scheme = "https"
-
-			if target.Path == "" {
-				target.Path = "/"
-			}
-
-			stdhttp.Redirect(e.Response, e.Request, target.String(), stdhttp.StatusPermanentRedirect)
-			return nil
-		},
-		Priority: -9999,
-	}
 }
 
 func contains(items []string, target string) bool {

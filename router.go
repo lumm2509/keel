@@ -1,16 +1,15 @@
 package keel
 
 import (
-	"github.com/lumm2509/keel/container"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 )
 
-type Context[Cradle any] = container.RequestEvent[Cradle]
+type Context[Cradle any] = transporthttp.RequestEvent[Cradle]
 type Handler[Cradle any] func(*Context[Cradle]) error
 type Middleware[Cradle any] func(*Context[Cradle]) error
 
 type Group[Cradle any] struct {
-	inner *transporthttp.RouterGroup[*container.RequestEvent[Cradle]]
+	inner *transporthttp.RouterGroup[*transporthttp.RequestEvent[Cradle]]
 }
 
 func (g *Group[Cradle]) Use(middlewares ...Middleware[Cradle]) *Group[Cradle] {

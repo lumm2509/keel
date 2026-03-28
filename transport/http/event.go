@@ -115,57 +115,114 @@ func (e *Event) RealIPFromTrustedProxies(trusted []netip.Prefix) string {
 	}
 
 	remote := e.RemoteIP()
-	parsedRemote, err := netip.ParseAddr(strings.TrimSpace(remote))
-	if err != nil {
+	parsedRemote, ok := parseProxyAddr(remote)
+	if !ok {
 		return remote
 	}
 
-	var trustedProxy bool
-	for _, prefix := range trusted {
-		if prefix.Contains(parsedRemote) {
-			trustedProxy = true
-			break
-		}
-	}
-	if !trustedProxy {
+	if !isTrustedProxy(parsedRemote, trusted) {
 		return remote
 	}
 
-	if forwarded := e.Request.Header.Get("Forwarded"); forwarded != "" {
-		for _, part := range strings.Split(forwarded, ";") {
-			part = strings.TrimSpace(part)
-			if len(part) < 4 || !strings.EqualFold(part[:4], "for=") {
-				continue
-			}
-
-			value := strings.Trim(strings.TrimSpace(part[4:]), "\"")
-			if host, _, err := net.SplitHostPort(value); err == nil {
-				value = host
-			}
-
-			value = strings.TrimPrefix(strings.TrimPrefix(value, "["), "]")
-			if parsed, err := netip.ParseAddr(value); err == nil {
-				return parsed.StringExpanded()
-			}
-		}
+	chain := parseForwardedChain(e.Request.Header.Get("Forwarded"))
+	if len(chain) == 0 {
+		chain = parseXForwardedForChain(e.Request.Header.Get("X-Forwarded-For"))
 	}
-
-	if xff := e.Request.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, part := range strings.Split(xff, ",") {
-			value := strings.TrimSpace(part)
-			if parsed, err := netip.ParseAddr(value); err == nil {
-				return parsed.StringExpanded()
-			}
-		}
+	if len(chain) > 0 {
+		return resolveTrustedProxyChain(parsedRemote, chain, trusted).StringExpanded()
 	}
 
 	if realIP := strings.TrimSpace(e.Request.Header.Get("X-Real-IP")); realIP != "" {
-		if parsed, err := netip.ParseAddr(realIP); err == nil {
+		if parsed, ok := parseProxyAddr(realIP); ok {
 			return parsed.StringExpanded()
 		}
 	}
 
 	return remote
+}
+
+func isTrustedProxy(addr netip.Addr, trusted []netip.Prefix) bool {
+	for _, prefix := range trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func parseForwardedChain(forwarded string) []netip.Addr {
+	if forwarded == "" {
+		return nil
+	}
+
+	parts := strings.Split(forwarded, ",")
+	result := make([]netip.Addr, 0, len(parts))
+
+	for _, entry := range parts {
+		for _, param := range strings.Split(entry, ";") {
+			param = strings.TrimSpace(param)
+			if len(param) < 4 || !strings.EqualFold(param[:4], "for=") {
+				continue
+			}
+
+			if addr, ok := parseProxyAddr(strings.TrimSpace(param[4:])); ok {
+				result = append(result, addr)
+				break
+			}
+		}
+	}
+
+	return result
+}
+
+func parseXForwardedForChain(xff string) []netip.Addr {
+	if xff == "" {
+		return nil
+	}
+
+	parts := strings.Split(xff, ",")
+	result := make([]netip.Addr, 0, len(parts))
+
+	for _, part := range parts {
+		if addr, ok := parseProxyAddr(part); ok {
+			result = append(result, addr)
+		}
+	}
+
+	return result
+}
+
+func parseProxyAddr(raw string) (netip.Addr, bool) {
+	value := strings.Trim(strings.TrimSpace(raw), "\"")
+	if value == "" || strings.EqualFold(value, "unknown") || strings.HasPrefix(value, "_") {
+		return netip.Addr{}, false
+	}
+
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+
+	value = strings.TrimPrefix(strings.TrimPrefix(value, "["), "]")
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+
+	return addr, true
+}
+
+func resolveTrustedProxyChain(remote netip.Addr, chain []netip.Addr, trusted []netip.Prefix) netip.Addr {
+	current := remote
+
+	for i := len(chain) - 1; i >= 0; i-- {
+		if !isTrustedProxy(current, trusted) {
+			return current
+		}
+		current = chain[i]
+	}
+
+	return current
 }
 
 // FindUploadedFiles extracts all form files of "key" from a http request

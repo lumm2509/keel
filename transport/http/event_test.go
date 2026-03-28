@@ -250,6 +250,69 @@ func TestEventRealIPFromTrustedProxies(t *testing.T) {
 	}
 }
 
+func TestEventRealIPFromTrustedProxiesStopsAtFirstUntrustedHop(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("X-Forwarded-For", "198.51.100.20, 10.1.1.10, 172.16.0.9")
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
+	if got := event.RealIPFromTrustedProxies(trusted); got != "172.16.0.9" {
+		t.Fatalf("expected first untrusted hop, got %q", got)
+	}
+}
+
+func TestEventRealIPFromTrustedProxiesForwardedHeader(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("Forwarded", `for=198.51.100.20;proto=https, for="[2001:db8::10]:1234", for=10.0.0.5`)
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+
+	if got := event.RealIPFromTrustedProxies(trusted); got != "198.51.100.20" {
+		t.Fatalf("expected forwarded client IP, got %q", got)
+	}
+}
+
+func TestEventRealIPFromTrustedProxiesForwardedHeaderIgnoresUnknownAndObfuscated(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("Forwarded", `for=unknown, for=_hidden, for=203.0.113.60`)
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
+	if got := event.RealIPFromTrustedProxies(trusted); got != "203.0.113.60" {
+		t.Fatalf("expected first valid forwarded IP, got %q", got)
+	}
+}
+
+func TestEventRealIPFromTrustedProxiesFallsBackToXRealIP(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("X-Real-IP", "203.0.113.11")
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
+	if got := event.RealIPFromTrustedProxies(trusted); got != "203.0.113.11" {
+		t.Fatalf("expected X-Real-IP from trusted proxy, got %q", got)
+	}
+}
+
 func TestFindUploadedFiles(t *testing.T) {
 	scenarios := []struct {
 		filename        string
