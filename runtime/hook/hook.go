@@ -67,6 +67,13 @@ type triggerState[T Resolver] struct {
 	nextIndex int
 }
 
+type triggerSingleState[T Resolver] struct {
+	event     T
+	handlers  []*Handler[T]
+	oneOff    func(T) error
+	nextIndex int
+}
+
 func (s *triggerState[T]) next() error {
 	if s.nextIndex < len(s.handlers) {
 		handler := s.handlers[s.nextIndex]
@@ -81,6 +88,21 @@ func (s *triggerState[T]) next() error {
 
 	s.nextIndex++
 	return s.oneOff[oneOffIndex](s.event)
+}
+
+func (s *triggerSingleState[T]) next() error {
+	if s.nextIndex < len(s.handlers) {
+		handler := s.handlers[s.nextIndex]
+		s.nextIndex++
+		return handler.Func(s.event)
+	}
+
+	if s.nextIndex > len(s.handlers) || s.oneOff == nil {
+		return nil
+	}
+
+	s.nextIndex++
+	return s.oneOff(s.event)
 }
 
 // Bind registers the provided handler to the current hooks queue.
@@ -239,6 +261,41 @@ func (h *Hook[T]) Trigger(event T, oneOffHandlerFuncs ...func(T) error) error {
 
 		i++
 		return oneOffHandlerFuncs[oneOffIndex](event)
+	})
+
+	return event.Next()
+}
+
+// TriggerWithOneOff is a specialized fast path for the common
+// "middlewares + final action" execution pattern.
+func (h *Hook[T]) TriggerWithOneOff(event T, oneOff func(T) error) error {
+	h.mu.RLock()
+	handlers := h.handlers
+	h.mu.RUnlock()
+
+	if statefulEvent, ok := any(event).(nextStateSetter); ok {
+		statefulEvent.setNextState(&triggerSingleState[T]{
+			event:    event,
+			handlers: handlers,
+			oneOff:   oneOff,
+		})
+		return event.Next()
+	}
+
+	i := 0
+	event.setNextFunc(func() error {
+		if i < len(handlers) {
+			handler := handlers[i]
+			i++
+			return handler.Func(event)
+		}
+
+		if i > len(handlers) || oneOff == nil {
+			return nil
+		}
+
+		i++
+		return oneOff(event)
 	})
 
 	return event.Next()

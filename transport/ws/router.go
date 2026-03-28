@@ -93,7 +93,7 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents [
 				req := conn.Request()
 				event, cleanupFunc := r.eventFactory(conn, req)
 
-				err := routeHook.Trigger(event, v.Action)
+				err := routeHook.TriggerWithOneOff(event, v.Action)
 				if err != nil {
 					r.errorHandler(conn, req, err)
 				}

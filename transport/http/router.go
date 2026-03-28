@@ -8,12 +8,25 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/lumm2509/keel/runtime/hook"
 )
 
 type routePatternSetter interface {
 	SetRoutePattern(string)
+}
+
+var responseWriterPool = sync.Pool{
+	New: func() any {
+		return &ResponseWriter{}
+	},
+}
+
+var rereadableBodyPool = sync.Pool{
+	New: func() any {
+		return &RereadableReadCloser{Lazy: true}
+	},
 }
 
 type EventCleanupFunc func()
@@ -104,6 +117,7 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 			routeHandlers := mergeIncludedHandlers(nextState.middlewares, v.excludedMiddlewares, v.Middlewares, v.excludedMiddlewares)
 			routeHook := &hook.Hook[T]{}
 			routeHook.SetSortedHandlers(routeHandlers)
+			hasMiddlewares := len(routeHandlers) > 0
 
 			routePattern := nextState.prefix + v.Path
 			if v.Method != "" {
@@ -112,21 +126,29 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 
 			mux.HandleFunc(routePattern, func(resp http.ResponseWriter, req *http.Request) {
 				// wrap the response to add write and status tracking
-				resp = &ResponseWriter{ResponseWriter: resp}
+				responseWriter := acquireResponseWriter(resp)
+				defer releaseResponseWriter(responseWriter)
+				resp = responseWriter
 
-				// wrap the request body to allow multiple reads
-				body := &RereadableReadCloser{ReadCloser: req.Body, Lazy: true}
-				defer body.Close()
-
-				req.Body = body
+				var body *RereadableReadCloser
+				if req.Body != nil {
+					// Keep reread support available, but only for paths that explicitly enable it.
+					body = acquireRereadableBody(req.Body)
+					defer releaseRereadableBody(body)
+					req.Body = body
+				}
 
 				event, cleanupFunc := r.eventFactory(resp, req)
 				if setter, ok := any(event).(routePatternSetter); ok {
 					setter.SetRoutePattern(routePattern)
 				}
 
-				// trigger the handler hook chain
-				err := routeHook.Trigger(event, v.Action)
+				var err error
+				if hasMiddlewares {
+					err = routeHook.TriggerWithOneOff(event, v.Action)
+				} else {
+					err = v.Action(event)
+				}
 				if err != nil {
 					ErrorHandler(resp, req, err)
 				}
@@ -219,6 +241,27 @@ type ResponseWriter struct {
 	written      bool
 	status       int
 	bytesWritten int
+}
+
+func acquireResponseWriter(w http.ResponseWriter) *ResponseWriter {
+	rw := responseWriterPool.Get().(*ResponseWriter)
+	rw.ResponseWriter = w
+	rw.written = false
+	rw.status = 0
+	rw.bytesWritten = 0
+	return rw
+}
+
+func releaseResponseWriter(rw *ResponseWriter) {
+	if rw == nil {
+		return
+	}
+
+	rw.ResponseWriter = nil
+	rw.written = false
+	rw.status = 0
+	rw.bytesWritten = 0
+	responseWriterPool.Put(rw)
 }
 
 func (rw *ResponseWriter) WriteHeader(status int) {
@@ -319,6 +362,32 @@ func (rw *ResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {
 // Unwrap returns the underlying ResponseWritter instance (usually used by [http.ResponseController]).
 func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
+}
+
+func acquireRereadableBody(body io.ReadCloser) *RereadableReadCloser {
+	wrapped := rereadableBodyPool.Get().(*RereadableReadCloser)
+	wrapped.ReadCloser = body
+	wrapped.copy = nil
+	wrapped.closeErrors = nil
+	wrapped.enabled = false
+	wrapped.Lazy = true
+	wrapped.MaxMemory = 0
+	return wrapped
+}
+
+func releaseRereadableBody(body *RereadableReadCloser) {
+	if body == nil {
+		return
+	}
+
+	_ = body.Close()
+	body.ReadCloser = nil
+	body.copy = nil
+	body.closeErrors = nil
+	body.enabled = false
+	body.Lazy = true
+	body.MaxMemory = 0
+	rereadableBodyPool.Put(body)
 }
 
 func getWritten(rw http.ResponseWriter) (bool, error) {

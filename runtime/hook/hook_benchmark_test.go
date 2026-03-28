@@ -16,7 +16,7 @@ func BenchmarkHookTrigger(b *testing.B) {
 	b.Run("current", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if err := h.Trigger(&Event{}, func(e *Event) error { return e.Next() }); err != nil {
+			if err := h.TriggerWithOneOff(&Event{}, func(e *Event) error { return e.Next() }); err != nil {
 				b.Fatal(err)
 			}
 		}

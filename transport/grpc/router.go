@@ -152,7 +152,7 @@ func (r *Router[T]) unaryHandler(routeHook *hook.Hook[T], action func(e T) error
 				defer cleanupFunc()
 			}
 
-			if err := routeHook.Trigger(event, action); err != nil {
+			if err := routeHook.TriggerWithOneOff(event, action); err != nil {
 				return nil, ToStatusError(err)
 			}
 
