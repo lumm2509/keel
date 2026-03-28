@@ -19,6 +19,10 @@ type rereadEnabler interface {
 	EnableReread()
 }
 
+type rereadStatus interface {
+	RereadEnabled() bool
+}
+
 // RereadableReadCloser defines a wrapper around a [io.ReadCloser] reader
 // allowing to read the original reader multiple times.
 //
@@ -69,6 +73,10 @@ func (r *RereadableReadCloser) Read(p []byte) (int, error) {
 
 func (r *RereadableReadCloser) EnableReread() {
 	r.enabled = true
+}
+
+func (r *RereadableReadCloser) RereadEnabled() bool {
+	return r.enabled
 }
 
 // Reread satisfies the [Rereader] interface and resets the r internal state to allow rereads.

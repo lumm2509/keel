@@ -75,6 +75,17 @@ func (e *Event) Flush() error {
 	return http.NewResponseController(e.Response).Flush()
 }
 
+// EnableBodyReread enables request body replay for wrappers that support it.
+func (e *Event) EnableBodyReread() {
+	if e.Request == nil || e.Request.Body == nil {
+		return
+	}
+
+	if body, ok := e.Request.Body.(rereadEnabler); ok {
+		body.EnableReread()
+	}
+}
+
 // IsTLS reports whether the connection on which the request was received is TLS.
 func (e *Event) IsTLS() bool {
 	return e.Request.TLS != nil
@@ -317,7 +328,10 @@ func (e *Event) JSON(status int, data any) error {
 	e.setResponseHeaderIfEmpty(headerContentType, "application/json")
 	e.Response.WriteHeader(status)
 
-	rawFields := e.Request.URL.Query().Get(jsonFieldsParam)
+	rawFields := ""
+	if e.Request.URL.RawQuery != "" {
+		rawFields = e.Request.URL.Query().Get(jsonFieldsParam)
+	}
 
 	// error response or no fields to pick
 	if rawFields == "" || status < 200 || status > 299 {
@@ -488,22 +502,21 @@ func (e *Event) BindBody(dst any) error {
 	contentType := e.Request.Header.Get(headerContentType)
 
 	if strings.HasPrefix(contentType, "application/json") {
-		if body, ok := e.Request.Body.(rereadEnabler); ok {
-			body.EnableReread()
-		}
-
 		dec := json.NewDecoder(e.Request.Body)
 		err := dec.Decode(dst)
-		if err == nil {
-			// manually call Reread because single call of json.Decoder.Decode()
-			// doesn't ensure that the entire body is a valid json string
-			// and it is not guaranteed that it will reach EOF to trigger the reread reset
-			// (ex. in case of trailing spaces or invalid trailing parts like: `{"test":1},something`)
-			if body, ok := e.Request.Body.(Rereader); ok {
+		if err != nil {
+			return err
+		}
+
+		if body, ok := e.Request.Body.(Rereader); ok {
+			if status, ok := e.Request.Body.(rereadStatus); ok && status.RereadEnabled() {
+				// json.Decoder may stop after one JSON value without consuming EOF,
+				// so explicitly reset only when replay was requested.
 				body.Reread()
 			}
 		}
-		return err
+
+		return nil
 	}
 
 	if strings.HasPrefix(contentType, "multipart/form-data") {

@@ -3,6 +3,7 @@ package http
 import (
 	"database/sql"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
@@ -29,6 +30,16 @@ const (
 	RequestInfoContextPasswordAuth  = "password"
 )
 
+var requestInfoPool = sync.Pool{
+	New: func() any {
+		return &RequestInfo{
+			Query:   make(map[string]string),
+			Headers: make(map[string]string),
+			Body:    make(map[string]any),
+		}
+	},
+}
+
 type RequestContainer[Cradle any] interface {
 	Cradle() *Cradle
 	Logger() *slog.Logger
@@ -48,6 +59,29 @@ type RequestInfo struct {
 	Body    map[string]any    `json:"body"`
 	Method  string            `json:"method"`
 	Context string            `json:"context"`
+}
+
+func acquireRequestInfo() *RequestInfo {
+	info := requestInfoPool.Get().(*RequestInfo)
+	clearStringMap(info.Query)
+	clearStringMap(info.Headers)
+	clearAnyMap(info.Body)
+	info.Method = ""
+	info.Context = ""
+	return info
+}
+
+func releaseRequestInfo(info *RequestInfo) {
+	if info == nil {
+		return
+	}
+
+	clearStringMap(info.Query)
+	clearStringMap(info.Headers)
+	clearAnyMap(info.Body)
+	info.Method = ""
+	info.Context = ""
+	requestInfoPool.Put(info)
 }
 
 func (info *RequestInfo) Clone() *RequestInfo {
@@ -89,6 +123,18 @@ type RequestEvent[Cradle any] struct {
 	routePattern string
 }
 
+func clearStringMap[M ~map[string]string](m M) {
+	for k := range m {
+		delete(m, k)
+	}
+}
+
+func clearAnyMap[M ~map[string]any](m M) {
+	for k := range m {
+		delete(m, k)
+	}
+}
+
 func (e *RequestEvent[Cradle]) Cradle() *Cradle {
 	return e.Container.Cradle()
 }
@@ -109,7 +155,7 @@ func (e *RequestEvent[Cradle]) SetRequestID(id string) {
 	if e.Response != nil && id != "" {
 		e.Response.Header().Set("X-Request-ID", id)
 	}
-	e.rebuildLogger()
+	e.logger = nil
 }
 
 func (e *RequestEvent[Cradle]) StartTime() time.Time {
@@ -155,7 +201,7 @@ func (e *RequestEvent[Cradle]) SetStartTime(start time.Time) {
 
 func (e *RequestEvent[Cradle]) SetLogger(logger *slog.Logger) {
 	e.loggerBase = logger
-	e.rebuildLogger()
+	e.logger = nil
 }
 
 func (e *RequestEvent[Cradle]) SetRoutePattern(pattern string) {
@@ -164,7 +210,37 @@ func (e *RequestEvent[Cradle]) SetRoutePattern(pattern string) {
 	} else {
 		e.routePattern = pattern
 	}
-	e.rebuildLogger()
+	e.logger = nil
+}
+
+func (e *RequestEvent[Cradle]) Reset(container RequestContainer[Cradle], response http.ResponseWriter, request *http.Request) {
+	e.releaseCachedRequestInfo()
+	e.Container = container
+	e.Event = Event{
+		Response: response,
+		Request:  request,
+	}
+	e.requestID = ""
+	e.startTime = time.Time{}
+	e.loggerBase = nil
+	e.logger = nil
+	e.routePattern = ""
+}
+
+func (e *RequestEvent[Cradle]) Release() {
+	e.releaseCachedRequestInfo()
+	e.Container = nil
+	e.Event = Event{}
+	e.requestID = ""
+	e.startTime = time.Time{}
+	e.loggerBase = nil
+	e.logger = nil
+	e.routePattern = ""
+}
+
+func (e *RequestEvent[Cradle]) releaseCachedRequestInfo() {
+	releaseRequestInfo(e.cachedRequestInfo)
+	e.cachedRequestInfo = nil
 }
 
 func (e *RequestEvent[Cradle]) rebuildLogger() {
@@ -223,22 +299,21 @@ func (e *RequestEvent[C]) initRequestInfo() error {
 		infoCtx = RequestInfoContextDefault
 	}
 
-	info := &RequestInfo{
-		Context: infoCtx,
-		Method:  e.Request.Method,
-		Query:   map[string]string{},
-		Headers: map[string]string{},
-		Body:    map[string]any{},
-	}
+	info := acquireRequestInfo()
+	info.Context = infoCtx
+	info.Method = e.Request.Method
 
 	if err := e.BindBody(&info.Body); err != nil {
+		releaseRequestInfo(info)
 		return err
 	}
 
-	query := e.Request.URL.Query()
-	for k, v := range query {
-		if len(v) > 0 {
-			info.Query[k] = v[0]
+	if rawQuery := e.Request.URL.RawQuery; rawQuery != "" {
+		query := e.Request.URL.Query()
+		for k, v := range query {
+			if len(v) > 0 {
+				info.Query[k] = v[0]
+			}
 		}
 	}
 

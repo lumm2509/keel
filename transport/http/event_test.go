@@ -979,6 +979,69 @@ func TestEventBindBody(t *testing.T) {
 	}
 }
 
+func TestEventBindBodyJSONReplayIsExplicit(t *testing.T) {
+	t.Parallel()
+
+	type payload struct {
+		A int `json:"a"`
+	}
+
+	newEvent := func(enableReplay bool) *router.Event {
+		req, err := http.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":123}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req.Header.Set("content-type", "application/json")
+		req.Body = &router.RereadableReadCloser{
+			ReadCloser: req.Body,
+			Lazy:       true,
+		}
+
+		event := &router.Event{Request: req}
+		if enableReplay {
+			event.EnableBodyReread()
+		}
+
+		return event
+	}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		event := newEvent(false)
+
+		var first payload
+		if err := event.BindBody(&first); err != nil {
+			t.Fatalf("first bind failed: %v", err)
+		}
+		if first.A != 123 {
+			t.Fatalf("expected first bind payload, got %+v", first)
+		}
+
+		var second payload
+		if err := event.BindBody(&second); !errors.Is(err, io.EOF) {
+			t.Fatalf("expected second bind to hit EOF without replay, got %v", err)
+		}
+	})
+
+	t.Run("enabled explicitly", func(t *testing.T) {
+		event := newEvent(true)
+
+		var first payload
+		if err := event.BindBody(&first); err != nil {
+			t.Fatalf("first bind failed: %v", err)
+		}
+
+		var second payload
+		if err := event.BindBody(&second); err != nil {
+			t.Fatalf("second bind failed with replay enabled: %v", err)
+		}
+
+		if second.A != 123 {
+			t.Fatalf("expected second bind payload, got %+v", second)
+		}
+	})
+}
+
 // -------------------------------------------------------------------
 
 type testResponseWriteScenario[T any] struct {
