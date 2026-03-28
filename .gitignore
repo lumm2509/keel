@@ -1,2 +1,21 @@
-benchmarks/
-out/
+# Build outputs
+/bin/
+/dist/
+/out/
+
+# Test and coverage artifacts
+/*.test
+/*.out
+/coverage.out
+/coverage.html
+
+# Profiling artifacts
+/*.prof
+/cpu.prof
+/mem.prof
+/block.prof
+/mutex.prof
+/trace.out
+
+# Benchmark artifacts
+/benchmarks/jsonparse/results/
