@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/netip"
 
+	"github.com/lumm2509/keel/dal"
+	"github.com/lumm2509/keel/dml"
 	"github.com/lumm2509/keel/infra/filesystem"
 	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/subscriptions"
@@ -22,6 +24,8 @@ type Container[Cradle any] interface {
 	Cron() *cron.Cron
 	SubscriptionsBroker() *subscriptions.Broker
 	DataBase() *sql.DB
+	Dal() *dal.Service
+	Dml() *dml.Service
 }
 
 type DataDirProvider interface{ DataDir() string }
