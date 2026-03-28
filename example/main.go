@@ -21,10 +21,6 @@ func main() {
 		Projectconfig: config.ProjectConfigOptions{
 			IsDev: true,
 		},
-		FeatureFlags: map[string]any{
-			"welcomeBanner": true,
-			"apiVersion":    "v1",
-		},
 	}
 
 	app := keel.New(
@@ -70,7 +66,6 @@ func main() {
 				"name":    c.Cradle().Name,
 				"version": c.Cradle().Version,
 				"scope":   c.Get("scope"),
-				"flags":   app.Config().FeatureFlags,
 			})
 		})
 

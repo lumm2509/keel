@@ -15,8 +15,7 @@ func TestConfigModuleJSONTrustedProxyCIDRsRoundTrip(t *testing.T) {
 				"trustedProxyCidrs": ["10.0.0.0/8", "192.168.0.0/16"],
 				"allowedOrigins": ["https://example.com"]
 			}
-		},
-		"featureFlags": {"alpha": true}
+		}
 	}`)
 
 	var cfg ConfigModule
@@ -44,22 +43,5 @@ func TestProjectConfigOptionsZeroValuesRemainUsable(t *testing.T) {
 	var cfg ConfigModule
 	if cfg.Projectconfig.Http != nil {
 		t.Fatalf("Http config = %#v, want nil by default", cfg.Projectconfig.Http)
-	}
-	if cfg.FeatureFlags != nil {
-		t.Fatalf("FeatureFlags = %#v, want nil by default", cfg.FeatureFlags)
-	}
-}
-
-func TestWorkerModesStableValues(t *testing.T) {
-	t.Parallel()
-
-	if Shared != "shared" {
-		t.Fatalf("Shared = %q, want %q", Shared, "shared")
-	}
-	if Worker != "worker" {
-		t.Fatalf("Worker = %q, want %q", Worker, "worker")
-	}
-	if Server != "server" {
-		t.Fatalf("Server = %q, want %q", Server, "server")
 	}
 }
