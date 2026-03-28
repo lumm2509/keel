@@ -19,6 +19,9 @@ type Container[Cradle any] interface {
 	InitResources() error
 	ResetResources() error
 	IsDev() bool
+	DataDir() string
+	EncryptionEnv() string
+	ReloadSettings() error
 	Store() *store.Store[string, any]
 	Cron() *cron.Cron
 	SubscriptionsBroker() *subscriptions.Broker

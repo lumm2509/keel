@@ -17,6 +17,8 @@ type ProjectConfigOptions struct {
 	DatabaseSchema        *string                `json:"databaseSchema,omitempty"`
 	Databaselogging       *bool                  `json:"databaseLogging,omitempty"`
 	DatabaseDriverOptions *DatabaseDriverOptions `json:"databaseDriverOptions,omitempty"`
+	DataDir               *string                `json:"dataDir,omitempty"`
+	EncryptionEnv         *string                `json:"encryptionEnv,omitempty"`
 	IsDev                 bool                   `json:"isDev"`
 	Http                  *HttpConfigOptions     `json:"http,omitempty"`
 }

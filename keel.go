@@ -182,11 +182,39 @@ func resolveAppConfig[Cradle any](options ...Option[Cradle]) builderConfig[Cradl
 		}
 	}
 
+	cfg.config = normalizeConfigModule(cfg.config)
+
 	if cfg.container == nil {
 		cfg.container = container.LoadBasecontainer(cfg.config, cfg.cradle)
 	}
 
 	return cfg
+}
+
+func normalizeConfigModule(cfg *config.ConfigModule) *config.ConfigModule {
+	if cfg == nil {
+		cfg = &config.ConfigModule{}
+	}
+
+	if cfg.Projectconfig.DataDir == nil || *cfg.Projectconfig.DataDir == "" {
+		dataDir := filepath.Join(defaultBaseDir(), "pb_data")
+		cfg.Projectconfig.DataDir = &dataDir
+	}
+
+	if cfg.Projectconfig.EncryptionEnv == nil {
+		encryptionEnv := ""
+		cfg.Projectconfig.EncryptionEnv = &encryptionEnv
+	}
+
+	return cfg
+}
+
+func defaultBaseDir() string {
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		return wd
+	}
+
+	return filepath.Dir(os.Args[0])
 }
 
 func (a *App[Cradle]) Start() error {
@@ -405,6 +433,10 @@ func (a *App[Cradle]) Group(prefix string, fn func(*Group[Cradle])) *Group[Cradl
 		fn(group)
 	}
 	return group
+}
+
+func (a *App[Cradle]) BuildMux() (stdhttp.Handler, error) {
+	return a.router.BuildMux()
 }
 
 func (a *App[Cradle]) routeBinder() bindRoutesFunc[Cradle] {

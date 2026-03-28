@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"os"
 	"sync"
 	"time"
 
@@ -21,7 +22,6 @@ import (
 var _ Container[any] = (*BaseContainer[any])(nil)
 
 var errDataDirNotConfigured = errors.New("container data dir is not configured")
-var errContainerReloadNotImplemented = errors.New("container reload is not implemented")
 var errContainerRestartNotImplemented = errors.New("container restart is not implemented")
 
 type BaseContainer[Cradle any] struct {
@@ -83,12 +83,20 @@ func (b *BaseContainer[Cradle]) DataBase() *sql.DB {
 
 // DataDir implements [Container].
 func (b *BaseContainer[Cradle]) DataDir() string {
-	return ""
+	if b.config == nil || b.config.Projectconfig.DataDir == nil {
+		return ""
+	}
+
+	return *b.config.Projectconfig.DataDir
 }
 
 // EncryptionEnv implements [Container].
 func (b *BaseContainer[Cradle]) EncryptionEnv() string {
-	return ""
+	if b.config == nil || b.config.Projectconfig.EncryptionEnv == nil {
+		return ""
+	}
+
+	return *b.config.Projectconfig.EncryptionEnv
 }
 
 // ResourcesReady implements [Container].
@@ -126,7 +134,19 @@ func (b *BaseContainer[Cradle]) NewFilesystem() (*filesystem.System, error) {
 
 // ReloadSettings implements [Container].
 func (b *BaseContainer[Cradle]) ReloadSettings() error {
-	return errContainerReloadNotImplemented
+	b.trustedProxyRanges = nil
+	b.trustedProxyOnce = sync.Once{}
+
+	if err := b.initLogger(); err != nil {
+		return err
+	}
+
+	dataDir := b.DataDir()
+	if dataDir == "" {
+		return nil
+	}
+
+	return os.MkdirAll(dataDir, os.ModePerm)
 }
 
 // ResetResources implements [Container].
@@ -148,6 +168,10 @@ func (b *BaseContainer[Cradle]) ResetResources() error {
 // InitResources implements [Container].
 func (b *BaseContainer[Cradle]) InitResources() error {
 	if err := b.ResetResources(); err != nil {
+		return err
+	}
+
+	if err := b.ReloadSettings(); err != nil {
 		return err
 	}
 

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -199,27 +201,43 @@ func TestInitResourcesWithoutConfigKeepsContainerUsable(t *testing.T) {
 func TestBaseContainerOptionalCapabilitiesReturnExplicitDefaults(t *testing.T) {
 	type cradle struct{}
 
-	container := LoadBasecontainer[cradle](&config.ConfigModule{})
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "pb_data")
+	encryptionEnv := "KEEL_TEST_ENCRYPTION_ENV"
 
-	if got := container.DataDir(); got != "" {
-		t.Fatalf("expected empty data dir by default, got %q", got)
+	container := LoadBasecontainer[cradle](&config.ConfigModule{
+		Projectconfig: config.ProjectConfigOptions{
+			DataDir:       &dataDir,
+			EncryptionEnv: &encryptionEnv,
+		},
+	})
+
+	if got := container.DataDir(); got != dataDir {
+		t.Fatalf("expected data dir %q, got %q", dataDir, got)
 	}
 
-	if got := container.EncryptionEnv(); got != "" {
-		t.Fatalf("expected empty encryption env by default, got %q", got)
+	if got := container.EncryptionEnv(); got != encryptionEnv {
+		t.Fatalf("expected encryption env %q, got %q", encryptionEnv, got)
 	}
 
 	fs, err := container.NewFilesystem()
-	if err == nil {
-		t.Fatalf("expected NewFilesystem() to fail without configured data dir, got fs=%v", fs)
+	if err != nil {
+		t.Fatalf("expected NewFilesystem() to succeed, got %v", err)
+	}
+	if fs == nil {
+		t.Fatalf("expected filesystem instance")
 	}
 
-	if !errors.Is(err, errDataDirNotConfigured) {
-		t.Fatalf("expected errDataDirNotConfigured, got %v", err)
+	if err := fs.Close(); err != nil {
+		t.Fatalf("filesystem.Close() error = %v", err)
 	}
 
-	if err := container.ReloadSettings(); !errors.Is(err, errContainerReloadNotImplemented) {
-		t.Fatalf("expected errContainerReloadNotImplemented, got %v", err)
+	if err := container.ReloadSettings(); err != nil {
+		t.Fatalf("expected ReloadSettings() to succeed, got %v", err)
+	}
+
+	if stat, err := os.Stat(dataDir); err != nil || !stat.IsDir() {
+		t.Fatalf("expected data dir to exist after ReloadSettings(), stat=%v err=%v", stat, err)
 	}
 
 	if err := container.Restart(); !errors.Is(err, errContainerRestartNotImplemented) {
