@@ -7,7 +7,6 @@ import (
 
 	"github.com/lumm2509/keel/dal"
 	"github.com/lumm2509/keel/dml"
-	"github.com/lumm2509/keel/infra/filesystem"
 	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/subscriptions"
 	"github.com/lumm2509/keel/runtime/cron"
@@ -28,11 +27,9 @@ type Container[Cradle any] interface {
 	Dml() *dml.Service
 }
 
+// DataDirProvider is implemented by containers that expose a data directory path.
+// Used by the HTTP serve layer to locate TLS certificate cache directories.
 type DataDirProvider interface{ DataDir() string }
-type EncryptionEnvProvider interface{ EncryptionEnv() string }
-type FilesystemProvider interface {
-	NewFilesystem() (*filesystem.System, error)
-}
-type SettingsReloader interface{ ReloadSettings() error }
-type Restarter interface{ Restart() error }
+
+// TrustedProxyProvider is implemented by containers that declare trusted proxy CIDR ranges.
 type TrustedProxyProvider interface{ TrustedProxyRanges() []netip.Prefix }

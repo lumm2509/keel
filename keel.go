@@ -27,7 +27,7 @@ import (
 
 var Version = "(untracked)"
 
-type BindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error)
+type bindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error)
 type HMRFunc func(context.Context) error
 type ServeConfig = apis.ServeConfig
 
@@ -53,14 +53,12 @@ type ServeEvent[C any] struct {
 
 type Config[Cradle any] struct {
 	Container       container.Container[Cradle]
-	BindRoutes      BindRoutesFunc[Cradle]
 	HMR             HMRFunc
 	HideStartBanner bool
 }
 
 func (cfg Config[Cradle]) apply(b *builderConfig[Cradle]) {
 	b.container = cfg.Container
-	b.bindRoutes = cfg.BindRoutes
 	b.hmr = cfg.HMR
 	b.hideStartBanner = cfg.HideStartBanner
 }
@@ -68,7 +66,7 @@ func (cfg Config[Cradle]) apply(b *builderConfig[Cradle]) {
 type App[Cradle any] struct {
 	container       container.Container[Cradle]
 	config          *config.ConfigModule
-	bindRoutes      BindRoutesFunc[Cradle]
+	bindRoutes      bindRoutesFunc[Cradle]
 	hmr             HMRFunc
 	hideStartBanner bool
 	router          *transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
@@ -77,7 +75,7 @@ type App[Cradle any] struct {
 	onServe         *hook.Hook[*ServeEvent[Cradle]]
 	onTerminate     *hook.Hook[*TerminateEvent[Cradle]]
 
-	RootCmd *cobra.Command
+	rootCmd *cobra.Command
 }
 
 type Option[Cradle any] interface {
@@ -88,7 +86,7 @@ type builderConfig[Cradle any] struct {
 	container       container.Container[Cradle]
 	config          *config.ConfigModule
 	cradle          *Cradle
-	bindRoutes      BindRoutesFunc[Cradle]
+	bindRoutes      bindRoutesFunc[Cradle]
 	hmr             HMRFunc
 	hideStartBanner bool
 }
@@ -140,7 +138,7 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 		bindRoutes:      builtConfig.bindRoutes,
 		hmr:             builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
-		RootCmd: &cobra.Command{
+		rootCmd: &cobra.Command{
 			Use:     executableName,
 			Short:   executableName + " CLI",
 			Version: Version,
@@ -161,8 +159,8 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 		}, nil
 	})
 
-	app.RootCmd.SetErr(newErrWriter())
-	app.RootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
+	app.rootCmd.SetErr(newErrWriter())
+	app.rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	return app
 }
@@ -184,11 +182,11 @@ func resolveAppConfig[Cradle any](options ...Option[Cradle]) builderConfig[Cradl
 }
 
 func (a *App[Cradle]) Start() error {
-	if len(os.Args) == 1 && (a.bindRoutes != nil || a.usesFacade) {
-		a.RootCmd.SetArgs([]string{"develop"})
+	if len(os.Args) == 1 && a.usesFacade {
+		a.rootCmd.SetArgs([]string{"develop"})
 	}
 
-	a.RootCmd.AddCommand(a.newDevelopCommand())
+	a.rootCmd.AddCommand(a.newDevelopCommand())
 	return a.Execute()
 }
 
@@ -213,7 +211,7 @@ func (a *App[Cradle]) Execute() error {
 	}()
 
 	go func() {
-		if err := a.RootCmd.ExecuteContext(context.Background()); err != nil {
+		if err := a.rootCmd.ExecuteContext(context.Background()); err != nil {
 			done <- err
 			return
 		}
@@ -263,7 +261,7 @@ func (a *App[Cradle]) skipBootstrap() bool {
 
 	flags := []string{"-h", "--help", "-v", "--version"}
 
-	cmd, _, err := a.RootCmd.Find(os.Args[1:])
+	cmd, _, err := a.rootCmd.Find(os.Args[1:])
 	if err != nil {
 		return true
 	}
@@ -401,7 +399,7 @@ func (a *App[Cradle]) Group(prefix string, fn func(*Group[Cradle])) *Group[Cradl
 	return group
 }
 
-func (a *App[Cradle]) routeBinder() BindRoutesFunc[Cradle] {
+func (a *App[Cradle]) routeBinder() bindRoutesFunc[Cradle] {
 	if a.bindRoutes != nil {
 		return a.bindRoutes
 	}
@@ -423,10 +421,7 @@ func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
 		hmr,
 		!a.hideStartBanner,
 		func(cfg apis.ServeConfig) error {
-			if a.bindRoutes != nil && a.usesFacade {
-				return errors.New("cannot combine App route facade methods with BindRoutes")
-			}
-			if a.bindRoutes == nil && !a.usesFacade {
+			if !a.usesFacade {
 				return errors.New("develop command requires routes")
 			}
 			err := a.serve(cfg)
