@@ -1,8 +1,7 @@
-package http
+package hook
 
-import "github.com/lumm2509/keel/runtime/hook"
-
-func appendSortedHandlers[T hook.Resolver](dst []*hook.Handler[T], handlers ...*hook.Handler[T]) []*hook.Handler[T] {
+// AppendSortedHandlers inserts handlers into dst maintaining ascending Priority order.
+func AppendSortedHandlers[T Resolver](dst []*Handler[T], handlers ...*Handler[T]) []*Handler[T] {
 	for _, handler := range handlers {
 		insertAt := len(dst)
 		for i, existing := range dst {
@@ -20,8 +19,10 @@ func appendSortedHandlers[T hook.Resolver](dst []*hook.Handler[T], handlers ...*
 	return dst
 }
 
-func mergeIncludedHandlers[T hook.Resolver](left []*hook.Handler[T], leftExcluded map[string]struct{}, right []*hook.Handler[T], rightExcluded map[string]struct{}) []*hook.Handler[T] {
-	result := make([]*hook.Handler[T], 0, len(left)+len(right))
+// MergeIncludedHandlers merges two sorted handler slices, skipping any handler
+// whose Id appears in the corresponding excluded map.
+func MergeIncludedHandlers[T Resolver](left []*Handler[T], leftExcluded map[string]struct{}, right []*Handler[T], rightExcluded map[string]struct{}) []*Handler[T] {
+	result := make([]*Handler[T], 0, len(left)+len(right))
 
 	i, j := 0, 0
 	for i < len(left) || j < len(right) {
@@ -58,4 +59,9 @@ func mergeIncludedHandlers[T hook.Resolver](left []*hook.Handler[T], leftExclude
 	}
 
 	return result
+}
+
+// unexported aliases used internally by group.go and route.go
+func appendSortedHandlers[T Resolver](dst []*Handler[T], handlers ...*Handler[T]) []*Handler[T] {
+	return AppendSortedHandlers(dst, handlers...)
 }

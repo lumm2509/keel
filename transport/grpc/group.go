@@ -3,8 +3,8 @@ package grpc
 import "github.com/lumm2509/keel/runtime/hook"
 
 type RouterGroup[T Resolver] struct {
-	excludedMiddlewares map[string]struct{}
-	children            []any // Route or RouterGroup
+	ExcludedMiddlewares map[string]struct{}
+	Children            []any // *Route[T] or *RouterGroup[T]
 
 	Prefix      string
 	Middlewares []*hook.Handler[T]
@@ -12,29 +12,27 @@ type RouterGroup[T Resolver] struct {
 
 func (group *RouterGroup[T]) Group(prefix string) *RouterGroup[T] {
 	newGroup := &RouterGroup[T]{Prefix: prefix}
-	group.children = append(group.children, newGroup)
+	group.Children = append(group.Children, newGroup)
 	return newGroup
 }
 
 func (group *RouterGroup[T]) BindFunc(middlewareFuncs ...func(e T) error) *RouterGroup[T] {
 	for _, m := range middlewareFuncs {
-		group.Middlewares = append(group.Middlewares, &hook.Handler[T]{Func: m})
+		group.Middlewares = hook.AppendSortedHandlers(group.Middlewares, &hook.Handler[T]{Func: m})
 	}
-
 	return group
 }
 
 func (group *RouterGroup[T]) Bind(middlewares ...*hook.Handler[T]) *RouterGroup[T] {
-	group.Middlewares = append(group.Middlewares, middlewares...)
+	group.Middlewares = hook.AppendSortedHandlers(group.Middlewares, middlewares...)
 
-	if group.excludedMiddlewares != nil {
+	if group.ExcludedMiddlewares != nil {
 		for _, m := range middlewares {
 			if m.Id != "" {
-				delete(group.excludedMiddlewares, m.Id)
+				delete(group.ExcludedMiddlewares, m.Id)
 			}
 		}
 	}
-
 	return group
 }
 
@@ -50,8 +48,8 @@ func (group *RouterGroup[T]) Unbind(middlewareIds ...string) *RouterGroup[T] {
 			}
 		}
 
-		for i := len(group.children) - 1; i >= 0; i-- {
-			switch v := group.children[i].(type) {
+		for i := len(group.Children) - 1; i >= 0; i-- {
+			switch v := group.Children[i].(type) {
 			case *RouterGroup[T]:
 				v.Unbind(middlewareId)
 			case *Route[T]:
@@ -59,12 +57,11 @@ func (group *RouterGroup[T]) Unbind(middlewareIds ...string) *RouterGroup[T] {
 			}
 		}
 
-		if group.excludedMiddlewares == nil {
-			group.excludedMiddlewares = map[string]struct{}{}
+		if group.ExcludedMiddlewares == nil {
+			group.ExcludedMiddlewares = map[string]struct{}{}
 		}
-		group.excludedMiddlewares[middlewareId] = struct{}{}
+		group.ExcludedMiddlewares[middlewareId] = struct{}{}
 	}
-
 	return group
 }
 
@@ -73,9 +70,7 @@ func (group *RouterGroup[T]) Route(method string, action func(e T) error) *Route
 		Method: method,
 		Action: action,
 	}
-
-	group.children = append(group.children, route)
-
+	group.Children = append(group.Children, route)
 	return route
 }
 
@@ -84,7 +79,7 @@ func (group *RouterGroup[T]) HasRoute(fullMethod string) bool {
 }
 
 func (group *RouterGroup[T]) hasRoute(fullMethod string, parents []*RouterGroup[T]) bool {
-	for _, child := range group.children {
+	for _, child := range group.Children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if v.hasRoute(fullMethod, append(parents, group)) {
@@ -96,6 +91,5 @@ func (group *RouterGroup[T]) hasRoute(fullMethod string, parents []*RouterGroup[
 			}
 		}
 	}
-
 	return false
 }

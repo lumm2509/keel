@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/runtime/hook"
 	"golang.org/x/net/websocket"
 )
@@ -14,8 +13,7 @@ type Event struct {
 	Request *http.Request
 
 	hook.Event
-
-	data store.Store[string, any]
+	hook.EventData
 }
 
 func (e *Event) ReadJSON(dst any) error {
@@ -42,22 +40,4 @@ func (e *Event) MarshalJSON(v any) ([]byte, error) {
 
 func (e *Event) Close() error {
 	return e.Conn.Close()
-}
-
-func (e *Event) Get(key string) any {
-	return e.data.Get(key)
-}
-
-func (e *Event) GetAll() map[string]any {
-	return e.data.GetAll()
-}
-
-func (e *Event) Set(key string, value any) {
-	e.data.Set(key, value)
-}
-
-func (e *Event) SetAll(m map[string]any) {
-	for k, v := range m {
-		e.Set(k, v)
-	}
 }

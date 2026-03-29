@@ -1,10 +1,10 @@
 package hook
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"sort"
 	"sync"
-
-	"github.com/lumm2509/keel/infra/security"
 )
 
 // Handler defines a single Hook handler.
@@ -302,5 +302,9 @@ func (h *Hook[T]) TriggerWithOneOff(event T, oneOff func(T) error) error {
 }
 
 func generateHookId() string {
-	return security.PseudorandomString(20)
+	b := make([]byte, 10)
+	if _, err := rand.Read(b); err != nil {
+		panic("keel/hook: crypto/rand unavailable: " + err.Error())
+	}
+	return hex.EncodeToString(b)
 }

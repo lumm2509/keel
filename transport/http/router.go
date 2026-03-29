@@ -13,8 +13,11 @@ import (
 	"github.com/lumm2509/keel/runtime/hook"
 )
 
-type routePatternSetter interface {
-	SetRoutePattern(string)
+// EventKeyRoutePattern is the EventData key used by the router to expose the matched route pattern.
+const EventKeyRoutePattern = "routePattern"
+
+type eventDataSetter interface {
+	Set(key string, value any)
 }
 
 var responseWriterPool = sync.Pool{
@@ -59,8 +62,6 @@ type EventFactoryFunc[T hook.Resolver] func(w http.ResponseWriter, r *http.Reque
 //
 //	http.ListenAndServe("localhost:8090", mux)
 type Router[T hook.Resolver] struct {
-	// @todo consider renaming the type to just Group and replace the embed type
-	// with an alias after Go 1.24 adds support for generic type aliases
 	*RouterGroup[T]
 
 	eventFactory EventFactoryFunc[T]
@@ -104,17 +105,17 @@ type routeBuildState[T hook.Resolver] struct {
 func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state routeBuildState[T]) error {
 	nextState := routeBuildState[T]{
 		prefix:      state.prefix + group.Prefix,
-		middlewares: mergeIncludedHandlers(state.middlewares, group.excludedMiddlewares, group.Middlewares, group.excludedMiddlewares),
+		middlewares: hook.MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
 	}
 
-	for _, child := range group.children {
+	for _, child := range group.Children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if err := r.loadMux(mux, v, nextState); err != nil {
 				return err
 			}
 		case *Route[T]:
-			routeHandlers := mergeIncludedHandlers(nextState.middlewares, v.excludedMiddlewares, v.Middlewares, v.excludedMiddlewares)
+			routeHandlers := hook.MergeIncludedHandlers(nextState.middlewares, v.ExcludedMiddlewares, v.Middlewares, v.ExcludedMiddlewares)
 			routeHook := &hook.Hook[T]{}
 			routeHook.SetSortedHandlers(routeHandlers)
 			hasMiddlewares := len(routeHandlers) > 0
@@ -139,8 +140,8 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 				}
 
 				event, cleanupFunc := r.eventFactory(resp, req)
-				if setter, ok := any(event).(routePatternSetter); ok {
-					setter.SetRoutePattern(routePattern)
+				if setter, ok := any(event).(eventDataSetter); ok {
+					setter.Set(EventKeyRoutePattern, routePattern)
 				}
 
 				var err error

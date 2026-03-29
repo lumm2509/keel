@@ -49,7 +49,7 @@ func (r *Router[T]) BuildHandler() (http.Handler, error) {
 }
 
 func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents []*RouterGroup[T]) error {
-	for _, child := range group.children {
+	for _, child := range group.Children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if err := r.loadMux(mux, v, append(parents, group)); err != nil {
@@ -63,9 +63,9 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents [
 			for _, p := range parents {
 				pattern += p.Prefix
 				for _, h := range p.Middlewares {
-					if _, ok := p.excludedMiddlewares[h.Id]; !ok {
-						if _, ok = group.excludedMiddlewares[h.Id]; !ok {
-							if _, ok = v.excludedMiddlewares[h.Id]; !ok {
+					if _, ok := p.ExcludedMiddlewares[h.Id]; !ok {
+						if _, ok = group.ExcludedMiddlewares[h.Id]; !ok {
+							if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
 								routeHook.Bind(h)
 							}
 						}
@@ -75,8 +75,8 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents [
 
 			pattern += group.Prefix
 			for _, h := range group.Middlewares {
-				if _, ok := group.excludedMiddlewares[h.Id]; !ok {
-					if _, ok = v.excludedMiddlewares[h.Id]; !ok {
+				if _, ok := group.ExcludedMiddlewares[h.Id]; !ok {
+					if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
 						routeHook.Bind(h)
 					}
 				}
@@ -84,7 +84,7 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], parents [
 
 			pattern += v.Path
 			for _, h := range v.Middlewares {
-				if _, ok := v.excludedMiddlewares[h.Id]; !ok {
+				if _, ok := v.ExcludedMiddlewares[h.Id]; !ok {
 					routeHook.Bind(h)
 				}
 			}

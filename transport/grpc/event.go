@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/runtime/hook"
 )
 
@@ -24,8 +23,8 @@ type Event struct {
 	Method  MethodInfo
 
 	hook.Event
+	hook.EventData
 
-	data     store.Store[string, any]
 	request  []byte
 	response []byte
 }
@@ -60,20 +59,3 @@ func (e *Event) grpcResponse() []byte {
 	return append([]byte(nil), e.response...)
 }
 
-func (e *Event) Get(key string) any {
-	return e.data.Get(key)
-}
-
-func (e *Event) GetAll() map[string]any {
-	return e.data.GetAll()
-}
-
-func (e *Event) Set(key string, value any) {
-	e.data.Set(key, value)
-}
-
-func (e *Event) SetAll(m map[string]any) {
-	for k, v := range m {
-		e.Set(k, v)
-	}
-}

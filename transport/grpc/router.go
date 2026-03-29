@@ -77,7 +77,7 @@ func (r *Router[T]) BuildServer(opts ...ggrpc.ServerOption) (*ggrpc.Server, erro
 }
 
 func (r *Router[T]) collectRoutes(serviceRoutes map[string][]ggrpc.MethodDesc, group *RouterGroup[T], parents []*RouterGroup[T]) error {
-	for _, child := range group.children {
+	for _, child := range group.Children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if err := r.collectRoutes(serviceRoutes, v, append(parents, group)); err != nil {
@@ -94,9 +94,9 @@ func (r *Router[T]) collectRoutes(serviceRoutes map[string][]ggrpc.MethodDesc, g
 
 			for _, p := range parents {
 				for _, h := range p.Middlewares {
-					if _, ok := p.excludedMiddlewares[h.Id]; !ok {
-						if _, ok = group.excludedMiddlewares[h.Id]; !ok {
-							if _, ok = v.excludedMiddlewares[h.Id]; !ok {
+					if _, ok := p.ExcludedMiddlewares[h.Id]; !ok {
+						if _, ok = group.ExcludedMiddlewares[h.Id]; !ok {
+							if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
 								routeHook.Bind(h)
 							}
 						}
@@ -105,15 +105,15 @@ func (r *Router[T]) collectRoutes(serviceRoutes map[string][]ggrpc.MethodDesc, g
 			}
 
 			for _, h := range group.Middlewares {
-				if _, ok := group.excludedMiddlewares[h.Id]; !ok {
-					if _, ok = v.excludedMiddlewares[h.Id]; !ok {
+				if _, ok := group.ExcludedMiddlewares[h.Id]; !ok {
+					if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
 						routeHook.Bind(h)
 					}
 				}
 			}
 
 			for _, h := range v.Middlewares {
-				if _, ok := v.excludedMiddlewares[h.Id]; !ok {
+				if _, ok := v.ExcludedMiddlewares[h.Id]; !ok {
 					routeHook.Bind(h)
 				}
 			}

@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/lumm2509/keel/infra/filesystem"
-	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/picker"
 	"github.com/lumm2509/keel/runtime/hook"
 )
@@ -33,8 +32,7 @@ type Event struct {
 	Request  *http.Request
 
 	hook.Event
-
-	data store.Store[string, any]
+	hook.EventData
 }
 
 // RWUnwrapper specifies that an http.ResponseWriter could be "unwrapped"
@@ -262,31 +260,6 @@ func (e *Event) FindUploadedFiles(key string) ([]*filesystem.File, error) {
 	}
 
 	return result, nil
-}
-
-// Store
-// -------------------------------------------------------------------
-
-// Get retrieves single value from the current event data store.
-func (e *Event) Get(key string) any {
-	return e.data.Get(key)
-}
-
-// GetAll returns a copy of the current event data store.
-func (e *Event) GetAll() map[string]any {
-	return e.data.GetAll()
-}
-
-// Set saves single value into the current event data store.
-func (e *Event) Set(key string, value any) {
-	e.data.Set(key, value)
-}
-
-// SetAll saves all items from m into the current event data store.
-func (e *Event) SetAll(m map[string]any) {
-	for k, v := range m {
-		e.Set(k, v)
-	}
 }
 
 // Response writers
