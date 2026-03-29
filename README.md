@@ -120,16 +120,14 @@ These are the parts that matter most:
 
 These stay because they are useful for actual development, not because I need them to look elegant in a README.
 
-| Package            | Status       | Notes                                            |
-| ------------------ | ------------ | ------------------------------------------------ |
-| `dal`              | experimental | useful direction, not part of the main story yet |
-| `dml`              | experimental | same deal                                        |
-| `infra/filesystem` | experimental | important in real projects, not core-facing yet  |
-| `transport/grpc`   | experimental | I use gRPC, so yes, it stays                     |
-| `transport/ws`     | experimental | same for WebSockets                              |
-| `runtime/cron`     | supporting   | useful runtime capability                        |
-| `commands`         | supporting   | CLI/runtime helpers                              |
-| `apis`             | supporting   | internal serving composition                     |
+| Package            | Status       | Notes                                           |
+| ------------------ | ------------ | ----------------------------------------------- |
+| `infra/filesystem` | experimental | important in real projects, not core-facing yet |
+| `transport/grpc`   | experimental | I use gRPC, so yes, it stays                    |
+| `transport/ws`     | experimental | same for WebSockets                             |
+| `runtime/cron`     | supporting   | useful runtime capability                       |
+| `commands`         | supporting   | CLI/runtime helpers                             |
+| `apis`             | supporting   | internal serving composition                    |
 
 ---
 

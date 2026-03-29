@@ -48,19 +48,6 @@ func TestLoadBasecontainerInitializesZeroCradle(t *testing.T) {
 	}
 }
 
-func TestLoadBasecontainerInitializesDalAndDmlBeforeBootstrap(t *testing.T) {
-	type cradle struct{}
-
-	container := LoadBasecontainer[cradle](&config.ConfigModule{})
-
-	if container.Dal() == nil {
-		t.Fatalf("expected Dal() service to be initialized")
-	}
-	if container.Dml() == nil {
-		t.Fatalf("expected Dml() service to be initialized")
-	}
-}
-
 type testSQLDriver struct {
 	closeCalls *int32
 }
@@ -119,12 +106,6 @@ func TestInitResourcesInitializesDatabaseAndExposesIt(t *testing.T) {
 	if container.DataBase() == nil {
 		t.Fatalf("expected database to be initialized")
 	}
-	if container.Dal() == nil {
-		t.Fatalf("expected dal service to be initialized")
-	}
-	if container.Dml() == nil {
-		t.Fatalf("expected dml service to be initialized")
-	}
 
 	if !container.ResourcesReady() {
 		t.Fatalf("expected container resources to be initialized")
@@ -136,12 +117,6 @@ func TestInitResourcesInitializesDatabaseAndExposesIt(t *testing.T) {
 
 	if container.DataBase() != nil {
 		t.Fatalf("expected database to be cleared after reset")
-	}
-	if container.Dal() == nil {
-		t.Fatalf("expected dal service to remain usable after reset")
-	}
-	if container.Dml() == nil {
-		t.Fatalf("expected dml service to remain usable after reset")
 	}
 
 	if atomic.LoadInt32(&closeCalls) == 0 {
@@ -166,12 +141,6 @@ func TestInitResourcesWithoutDatabaseURLKeepsContainerUsable(t *testing.T) {
 	if container.DataBase() != nil {
 		t.Fatalf("expected database to remain nil when no database url is configured")
 	}
-	if container.Dal() == nil {
-		t.Fatalf("expected dal service to exist without database url")
-	}
-	if container.Dml() == nil {
-		t.Fatalf("expected dml service to exist without database url")
-	}
 }
 
 func TestInitResourcesWithoutConfigKeepsContainerUsable(t *testing.T) {
@@ -189,12 +158,6 @@ func TestInitResourcesWithoutConfigKeepsContainerUsable(t *testing.T) {
 
 	if container.DataBase() != nil {
 		t.Fatalf("expected database to remain nil when config is missing")
-	}
-	if container.Dal() == nil {
-		t.Fatalf("expected dal service to exist without config")
-	}
-	if container.Dml() == nil {
-		t.Fatalf("expected dml service to exist without config")
 	}
 }
 

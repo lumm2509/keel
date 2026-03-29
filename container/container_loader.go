@@ -10,16 +10,12 @@ import (
 	"time"
 
 	"github.com/lumm2509/keel/config"
-	"github.com/lumm2509/keel/dal"
-	"github.com/lumm2509/keel/dml"
 	"github.com/lumm2509/keel/infra/database"
 	"github.com/lumm2509/keel/infra/filesystem"
 	"github.com/lumm2509/keel/infra/store"
 	"github.com/lumm2509/keel/pkg/subscriptions"
 	"github.com/lumm2509/keel/runtime/cron"
 )
-
-var _ Container[any] = (*BaseContainer[any])(nil)
 
 var errDataDirNotConfigured = errors.New("container data dir is not configured")
 var errContainerRestartNotImplemented = errors.New("container restart is not implemented")
@@ -29,8 +25,6 @@ type BaseContainer[Cradle any] struct {
 	cradle              *Cradle
 	bootstrapped        bool
 	db                  *sql.DB
-	dao                 *dal.Service
-	mut                 *dml.Service
 	store               *store.Store[string, any]
 	cron                *cron.Cron
 	subscriptionsBroker *subscriptions.Broker
@@ -54,17 +48,8 @@ func LoadBasecontainer[C any](config *config.ConfigModule, cradle ...*C) *BaseCo
 		subscriptionsBroker: subscriptions.NewBroker(),
 	}
 	container.dbConnect = container.connectDataDB
-	container.rebuildDataServices()
 
 	return container
-}
-
-func (b *BaseContainer[Cradle]) Dml() *dml.Service {
-	return b.mut
-}
-
-func (b *BaseContainer[Cradle]) Dal() *dal.Service {
-	return b.dao
 }
 
 // Cradle implements [Container].
@@ -153,7 +138,6 @@ func (b *BaseContainer[Cradle]) ReloadSettings() error {
 func (b *BaseContainer[Cradle]) ResetResources() error {
 	b.Cron().Stop()
 	b.bootstrapped = false
-	defer b.rebuildDataServices()
 
 	if b.db == nil {
 		return nil
@@ -172,10 +156,6 @@ func (b *BaseContainer[Cradle]) InitResources() error {
 	}
 
 	if err := b.ReloadSettings(); err != nil {
-		return err
-	}
-
-	if err := b.initLogger(); err != nil {
 		return err
 	}
 
@@ -219,7 +199,6 @@ func (b *BaseContainer[Cradle]) initDataDB() error {
 	}
 
 	b.db = db
-	b.rebuildDataServices()
 	return nil
 }
 
@@ -287,7 +266,3 @@ func (b *BaseContainer[Cradle]) TrustedProxyRanges() []netip.Prefix {
 	return append([]netip.Prefix(nil), b.trustedProxyRanges...)
 }
 
-func (b *BaseContainer[Cradle]) rebuildDataServices() {
-	b.dao = dal.New(b.db)
-	b.mut = dml.NewApp(b.dao).DML().(*dml.Service)
-}
