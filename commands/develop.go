@@ -12,7 +12,6 @@ import (
 type HMRFunc func(ctx context.Context) error
 
 func NewDevelopCommand(hmr HMRFunc, showStartBanner bool, serve func(apis.ServeConfig) error) *cobra.Command {
-	var allowedOrigins []string
 	var httpAddr string
 	var httpsAddr string
 
@@ -54,7 +53,6 @@ func NewDevelopCommand(hmr HMRFunc, showStartBanner bool, serve func(apis.ServeC
 					HttpAddr:           httpAddr,
 					HttpsAddr:          httpsAddr,
 					ShowStartBanner:    showStartBanner,
-					AllowedOrigins:     allowedOrigins,
 					CertificateDomains: args,
 				})
 			})
@@ -62,13 +60,6 @@ func NewDevelopCommand(hmr HMRFunc, showStartBanner bool, serve func(apis.ServeC
 			return g.Wait()
 		},
 	}
-
-	command.PersistentFlags().StringSliceVar(
-		&allowedOrigins,
-		"origins",
-		[]string{"*"},
-		"CORS allowed domain origins list",
-	)
 
 	command.PersistentFlags().StringVar(
 		&httpAddr,

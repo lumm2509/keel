@@ -72,7 +72,7 @@ func TestDefaultObservabilityCapturesRequestContext(t *testing.T) {
 
 	app := Default[struct{}](WithConfig[struct{}](cfg))
 
-	app.Get("/users/{id}", func(c *Context[struct{}]) error {
+	app.GET("/users/{id}", func(c *Context[struct{}]) error {
 		if c.RequestID() != "req-123" {
 			t.Fatalf("expected request ID to be propagated")
 		}
@@ -90,7 +90,7 @@ func TestDefaultObservabilityCapturesRequestContext(t *testing.T) {
 		return c.JSON(http.StatusCreated, map[string]string{"ok": "true"})
 	})
 
-	mux, err := app.router.BuildMux()
+	mux, err := app.Router.BuildMux()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,11 +142,11 @@ func TestDefaultObservabilityRecoversPanics(t *testing.T) {
 	cfg := newTestConfig(logger)
 
 	app := Default[struct{}](WithConfig[struct{}](cfg))
-	app.Get("/panic", func(c *Context[struct{}]) error {
+	app.GET("/panic", func(c *Context[struct{}]) error {
 		panic("boom")
 	})
 
-	mux, err := app.router.BuildMux()
+	mux, err := app.Router.BuildMux()
 	if err != nil {
 		t.Fatal(err)
 	}

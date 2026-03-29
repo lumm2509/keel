@@ -5,20 +5,6 @@ import (
 	"strings"
 )
 
-func AllowedOrigins(cfg AllowedOriginsConfig, explicit []string) []string {
-	if len(explicit) > 0 {
-		return append([]string(nil), explicit...)
-	}
-	if cfg != nil && len(cfg.HTTPAllowedOrigins()) > 0 {
-		return append([]string(nil), cfg.HTTPAllowedOrigins()...)
-	}
-	return []string{"*"}
-}
-
-type AllowedOriginsConfig interface {
-	HTTPAllowedOrigins() []string
-}
-
 func CORS(next http.Handler, allowedOrigins []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))

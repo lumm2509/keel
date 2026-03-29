@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,8 +28,6 @@ import (
 
 var Version = "(untracked)"
 
-type bindRoutesFunc[Cradle any] func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error)
-type HMRFunc func(context.Context) error
 type ServeConfig = apis.ServeConfig
 
 type BootstrapEvent[C any] struct {
@@ -53,7 +52,7 @@ type ServeEvent[C any] struct {
 
 type Config[Cradle any] struct {
 	Container       container.Container[Cradle]
-	HMR             HMRFunc
+	HMR             commands.HMRFunc
 	HideStartBanner bool
 }
 
@@ -64,13 +63,12 @@ func (cfg Config[Cradle]) apply(b *builderConfig[Cradle]) {
 }
 
 type App[Cradle any] struct {
+	*transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
+
 	container       container.Container[Cradle]
 	config          *config.ConfigModule
-	bindRoutes      bindRoutesFunc[Cradle]
-	hmr             HMRFunc
+	hmr             commands.HMRFunc
 	hideStartBanner bool
-	router          *transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
-	usesFacade      bool
 	onBootstrap     *hook.Hook[*BootstrapEvent[Cradle]]
 	onServe         *hook.Hook[*ServeEvent[Cradle]]
 	onTerminate     *hook.Hook[*TerminateEvent[Cradle]]
@@ -86,8 +84,7 @@ type builderConfig[Cradle any] struct {
 	container       container.Container[Cradle]
 	config          *config.ConfigModule
 	cradle          *Cradle
-	bindRoutes      bindRoutesFunc[Cradle]
-	hmr             HMRFunc
+	hmr             commands.HMRFunc
 	hideStartBanner bool
 }
 
@@ -116,7 +113,7 @@ func WithContainer[Cradle any](ctr container.Container[Cradle]) Option[Cradle] {
 	})
 }
 
-func WithHMR[Cradle any](hmr HMRFunc) Option[Cradle] {
+func WithHMR[Cradle any](hmr commands.HMRFunc) Option[Cradle] {
 	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
 		cfg.hmr = hmr
 	})
@@ -145,7 +142,6 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 	app := &App[Cradle]{
 		container:       builtConfig.container,
 		config:          builtConfig.config,
-		bindRoutes:      builtConfig.bindRoutes,
 		hmr:             builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
 		rootCmd:         rootCmd,
@@ -157,7 +153,7 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 		},
 	}
 
-	app.router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
+	app.Router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
 		event := requestEventPool.Get().(*transporthttp.RequestEvent[Cradle])
 		event.Reset(app.container, w, r)
 
@@ -218,16 +214,12 @@ func defaultBaseDir() string {
 }
 
 func (a *App[Cradle]) Start() error {
-	if len(os.Args) == 1 && a.usesFacade {
+	if len(os.Args) == 1 {
 		a.rootCmd.SetArgs([]string{"develop"})
 	}
 
 	a.rootCmd.AddCommand(a.newDevelopCommand())
 	return a.Execute()
-}
-
-func (a *App[Cradle]) Run() error {
-	return a.Start()
 }
 
 func (a *App[Cradle]) Execute() error {
@@ -303,7 +295,7 @@ func (a *App[Cradle]) skipBootstrap() bool {
 	}
 
 	for _, arg := range os.Args[1:] {
-		if !contains(flags, arg) {
+		if !slices.Contains(flags, arg) {
 			continue
 		}
 
@@ -348,122 +340,11 @@ func (a *App[Cradle]) Config() *config.ConfigModule {
 	return a.config
 }
 
-func (a *App[Cradle]) Use(middlewares ...Middleware[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	for _, middleware := range middlewares {
-		a.router.BindFunc(middleware)
-	}
-	return a
-}
-
-func (a *App[Cradle]) Get(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.GET(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) GET(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Get(path, handler)
-}
-
-func (a *App[Cradle]) Post(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.POST(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) POST(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Post(path, handler)
-}
-
-func (a *App[Cradle]) Put(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.PUT(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) PUT(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Put(path, handler)
-}
-
-func (a *App[Cradle]) Patch(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.PATCH(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) PATCH(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Patch(path, handler)
-}
-
-func (a *App[Cradle]) Delete(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.DELETE(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) DELETE(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Delete(path, handler)
-}
-
-func (a *App[Cradle]) Head(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.HEAD(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) HEAD(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Head(path, handler)
-}
-
-func (a *App[Cradle]) Options(path string, handler Handler[Cradle]) *App[Cradle] {
-	a.usesFacade = true
-	a.router.OPTIONS(path, handler)
-	return a
-}
-
-func (a *App[Cradle]) OPTIONS(path string, handler Handler[Cradle]) *App[Cradle] {
-	return a.Options(path, handler)
-}
-
-func (a *App[Cradle]) Group(prefix string, fn func(*Group[Cradle])) *Group[Cradle] {
-	a.usesFacade = true
-	group := &Group[Cradle]{inner: a.router.Group(prefix)}
-	if fn != nil {
-		fn(group)
-	}
-	return group
-}
-
-func (a *App[Cradle]) BuildMux() (stdhttp.Handler, error) {
-	return a.router.BuildMux()
-}
-
-func (a *App[Cradle]) routeBinder() bindRoutesFunc[Cradle] {
-	if a.bindRoutes != nil {
-		return a.bindRoutes
-	}
-
-	return func(container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error) {
-		return a.router, nil
-	}
-}
-
 func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
-	var hmr commands.HMRFunc
-	if a.hmr != nil {
-		hmr = func(ctx context.Context) error {
-			return a.hmr(ctx)
-		}
-	}
-
 	return commands.NewDevelopCommand(
-		hmr,
+		a.hmr,
 		!a.hideStartBanner,
 		func(cfg apis.ServeConfig) error {
-			if !a.usesFacade {
-				return errors.New("develop command requires routes")
-			}
 			err := a.serve(cfg)
 			if errors.Is(err, stdhttp.ErrServerClosed) {
 				return nil
@@ -474,7 +355,7 @@ func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
 }
 
 func (a *App[Cradle]) serve(config ServeConfig) error {
-	prepared, err := apis.PrepareServe(a.container, a.config, config, a.routeBinder())
+	prepared, err := apis.PrepareServe(a.container, a.config, config, a.Router)
 	if err != nil {
 		return err
 	}
@@ -569,15 +450,6 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	}
 
 	return nil
-}
-
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
 }
 
 func newErrWriter() *coloredWriter {

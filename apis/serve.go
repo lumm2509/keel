@@ -4,21 +4,23 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"net"
 	stdhttp "net/http"
 	"strings"
 	"time"
 
 	"github.com/lumm2509/keel/config"
-	"github.com/lumm2509/keel/container"
-	"github.com/lumm2509/keel/pkg/list"
-	"github.com/lumm2509/keel/runtime/hook"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 	"golang.org/x/crypto/acme/autocert"
 )
 
-type PreparedServe[Cradle any] struct {
-	Router      *transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
+type dataDirProvider interface {
+	DataDir() string
+}
+
+type PreparedServe[T any] struct {
+	Router      *transporthttp.Router[*transporthttp.RequestEvent[T]]
 	Server      *stdhttp.Server
 	CertManager *autocert.Manager
 	Listener    net.Listener
@@ -26,7 +28,7 @@ type PreparedServe[Cradle any] struct {
 	cancelBase  context.CancelFunc
 }
 
-func (p *PreparedServe[Cradle]) Close() {
+func (p *PreparedServe[T]) Close() {
 	if p.cancelBase != nil {
 		p.cancelBase()
 	}
@@ -36,13 +38,13 @@ func (p *PreparedServe[Cradle]) Close() {
 }
 
 // Serve starts a new app web server.
-func Serve[Cradle any](
-	ctr container.Container[Cradle],
+func Serve[T any](
+	ctx *T,
 	cfg *config.ConfigModule,
 	config ServeConfig,
-	bindRoutes func(ctr container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error),
+	router *transporthttp.Router[*transporthttp.RequestEvent[T]],
 ) error {
-	prepared, err := PrepareServe(ctr, cfg, config, bindRoutes)
+	prepared, err := PrepareServe(ctx, cfg, config, router)
 	if err != nil {
 		return err
 	}
@@ -71,33 +73,26 @@ func Serve[Cradle any](
 	return nil
 }
 
-func PrepareServe[Cradle any](
-	ctr container.Container[Cradle],
+func PrepareServe[T any](
+	ctx *T,
 	cfg *config.ConfigModule,
 	config ServeConfig,
-	bindRoutes func(ctr container.Container[Cradle]) (*transporthttp.Router[*transporthttp.RequestEvent[Cradle]], error),
-) (*PreparedServe[Cradle], error) {
-	config.AllowedOrigins = AllowedOrigins(HTTP(cfg), config.AllowedOrigins)
-
-	router, err := bindRoutes(ctr)
-	if err != nil {
-		return nil, err
-	}
-
+	router *transporthttp.Router[*transporthttp.RequestEvent[T]],
+) (*PreparedServe[T], error) {
 	mainAddr := config.HttpAddr
 	if config.HttpsAddr != "" {
 		mainAddr = config.HttpsAddr
 	}
 
-	hostNames, wwwRedirects := HostNames(mainAddr, config.CertificateDomains)
-	if len(wwwRedirects) > 0 {
-		router.Bind(WWWRedirect[Cradle](wwwRedirects))
-	}
+	hostNames, _ := HostNames(mainAddr, config.CertificateDomains)
 
 	dataDir := ""
-	if provider, ok := any(ctr).(container.DataDirProvider); ok {
+	if provider, ok := any(ctx).(dataDirProvider); ok {
 		dataDir = provider.DataDir()
+	} else if cfg != nil && cfg.Projectconfig.DataDir != nil {
+		dataDir = *cfg.Projectconfig.DataDir
 	}
+
 	certManager, err := CertManager(cfg, dataDir, hostNames)
 	if err != nil {
 		return nil, err
@@ -113,7 +108,7 @@ func PrepareServe[Cradle any](
 		BaseContext: func(net.Listener) context.Context {
 			return baseCtx
 		},
-		ErrorLog: log.New(&ServerErrorLogWriter[Cradle]{Container: ctr}, "", 0),
+		ErrorLog: log.New(&serverErrorLogWriter{cfg}, "", 0),
 	}
 
 	server.TLSConfig = TLSConfig(server.TLSConfig, certManager)
@@ -124,7 +119,7 @@ func PrepareServe[Cradle any](
 		return nil, err
 	}
 
-	server.Handler = CORS(handler, config.AllowedOrigins)
+	server.Handler = handler
 
 	addr := server.Addr
 	if addr == "" {
@@ -141,7 +136,7 @@ func PrepareServe[Cradle any](
 		return nil, err
 	}
 
-	return &PreparedServe[Cradle]{
+	return &PreparedServe[T]{
 		Router:      router,
 		Server:      server,
 		CertManager: certManager,
@@ -151,44 +146,15 @@ func PrepareServe[Cradle any](
 	}, nil
 }
 
-type ServerErrorLogWriter[Cradle any] struct {
-	Container container.Container[Cradle]
+type serverErrorLogWriter struct {
+	config *config.ConfigModule
 }
 
-func (s *ServerErrorLogWriter[Cradle]) Write(p []byte) (int, error) {
-	s.Container.Logger().Debug(strings.TrimSpace(string(p)))
-	return len(p), nil
-}
-
-func WWWRedirect[Cradle any](hosts []string) *hook.Handler[*transporthttp.RequestEvent[Cradle]] {
-	return &hook.Handler[*transporthttp.RequestEvent[Cradle]]{
-		Id: "wwwRedirect",
-		Func: func(e *transporthttp.RequestEvent[Cradle]) error {
-			if e.Request == nil || e.Request.URL == nil {
-				return e.Next()
-			}
-
-			host := e.Request.Host
-			if host == "" {
-				host = e.Request.URL.Host
-			}
-
-			if !list.ExistInSlice(host, hosts) {
-				return e.Next()
-			}
-
-			targetHost := strings.TrimPrefix(host, "www.")
-			target := *e.Request.URL
-			target.Host = targetHost
-			target.Scheme = "https"
-
-			if target.Path == "" {
-				target.Path = "/"
-			}
-
-			stdhttp.Redirect(e.Response, e.Request, target.String(), stdhttp.StatusPermanentRedirect)
-			return nil
-		},
-		Priority: -9999,
+func (s *serverErrorLogWriter) Write(p []byte) (int, error) {
+	logger := slog.Default()
+	if s.config != nil && s.config.Logger != nil {
+		logger = s.config.Logger
 	}
+	logger.Debug(strings.TrimSpace(string(p)))
+	return len(p), nil
 }

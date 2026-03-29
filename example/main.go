@@ -31,13 +31,13 @@ func main() {
 		}),
 	)
 
-	app.Use(func(c *keel.Context[Cradle]) error {
+	app.BindFunc(func(c *keel.Context[Cradle]) error {
 		c.Set("requestStartedAt", time.Now().UTC())
 		c.Set("requestMethod", c.Request.Method)
 		return c.Next()
 	})
 
-	app.Get("/", func(c *keel.Context[Cradle]) error {
+	app.GET("/", func(c *keel.Context[Cradle]) error {
 		return c.JSON(http.StatusOK, map[string]any{
 			"service": c.Cradle().Name,
 			"version": c.Cradle().Version,
@@ -46,7 +46,7 @@ func main() {
 		})
 	})
 
-	app.Get("/health", func(c *keel.Context[Cradle]) error {
+	app.GET("/health", func(c *keel.Context[Cradle]) error {
 		return c.JSON(http.StatusOK, map[string]any{
 			"ok":        true,
 			"method":    c.Get("requestMethod"),
@@ -55,28 +55,25 @@ func main() {
 		})
 	})
 
-	app.Group("/api", func(api *keel.Group[Cradle]) {
-		api.Use(func(c *keel.Context[Cradle]) error {
-			c.Set("scope", "api")
-			return c.Next()
+	api := app.Group("/api")
+	api.BindFunc(func(c *keel.Context[Cradle]) error {
+		c.Set("scope", "api")
+		return c.Next()
+	})
+	api.GET("/me", func(c *keel.Context[Cradle]) error {
+		return c.JSON(http.StatusOK, map[string]any{
+			"name":    c.Cradle().Name,
+			"version": c.Cradle().Version,
+			"scope":   c.Get("scope"),
 		})
+	})
 
-		api.Get("/me", func(c *keel.Context[Cradle]) error {
-			return c.JSON(http.StatusOK, map[string]any{
-				"name":    c.Cradle().Name,
-				"version": c.Cradle().Version,
-				"scope":   c.Get("scope"),
-			})
-		})
-
-		api.Group("/admin", func(admin *keel.Group[Cradle]) {
-			admin.Get("/summary", func(c *keel.Context[Cradle]) error {
-				return c.JSON(http.StatusOK, map[string]any{
-					"storeSize": c.Container.Store().Length(),
-					"isDev":     c.Container.IsDev(),
-					"brokerUp":  c.Container.SubscriptionsBroker() != nil,
-				})
-			})
+	admin := api.Group("/admin")
+	admin.GET("/summary", func(c *keel.Context[Cradle]) error {
+		return c.JSON(http.StatusOK, map[string]any{
+			"storeSize": c.Container.Store().Length(),
+			"isDev":     c.Container.IsDev(),
+			"brokerUp":  c.Container.SubscriptionsBroker() != nil,
 		})
 	})
 
@@ -95,7 +92,7 @@ func main() {
 		return e.Next()
 	})
 
-	if err := app.Run(); err != nil {
+	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
 }

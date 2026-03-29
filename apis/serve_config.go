@@ -5,5 +5,4 @@ type ServeConfig struct {
 	HttpAddr           string
 	HttpsAddr          string
 	CertificateDomains []string
-	AllowedOrigins     []string
 }

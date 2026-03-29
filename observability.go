@@ -16,11 +16,11 @@ const requestIDHeader = "X-Request-ID"
 
 func Default[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 	app := New(options...)
-	app.Use(Observability[Cradle]())
+	app.BindFunc(Observability[Cradle]())
 	return app
 }
 
-func Observability[Cradle any]() Middleware[Cradle] {
+func Observability[Cradle any]() HandlerFunc[Cradle] {
 	return func(c *Context[Cradle]) (err error) {
 		start := time.Now().UTC()
 		c.SetStartTime(start)

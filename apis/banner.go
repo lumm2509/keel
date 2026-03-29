@@ -13,8 +13,4 @@ func StartBanner(baseURL string) {
 
 	bold := color.New(color.Bold).Add(color.FgGreen)
 	bold.Printf("%s Server started at %s\n", strings.TrimSpace(date.String()), color.CyanString("%s", baseURL))
-
-	regular := color.New()
-	regular.Printf("├─ REST API:  %s\n", color.CyanString("%s/api/", baseURL))
-	regular.Printf("└─ Dashboard: %s\n", color.CyanString("%s/_/", baseURL))
 }

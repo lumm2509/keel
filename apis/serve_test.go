@@ -49,25 +49,6 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 	}
 }
 
-func TestAllowedOrigins(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.ConfigModule{
-		Projectconfig: config.ProjectConfigOptions{
-			Http: &config.HttpConfigOptions{
-				AllowedOrigins: []string{"https://cfg.example"},
-			},
-		},
-	}
-
-	if got := AllowedOrigins(HTTP(cfg), nil); len(got) != 1 || got[0] != "https://cfg.example" {
-		t.Fatalf("expected config origins, got %#v", got)
-	}
-
-	if got := AllowedOrigins(HTTP(cfg), []string{"https://flag.example"}); len(got) != 1 || got[0] != "https://flag.example" {
-		t.Fatalf("expected explicit origins to override config, got %#v", got)
-	}
-}
 
 func TestWrapCORSAllowedOrigin(t *testing.T) {
 	t.Parallel()
