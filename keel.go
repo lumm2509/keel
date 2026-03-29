@@ -19,7 +19,6 @@ import (
 	"github.com/lumm2509/keel/apis"
 	"github.com/lumm2509/keel/commands"
 	"github.com/lumm2509/keel/config"
-	"github.com/lumm2509/keel/container"
 	"github.com/lumm2509/keel/runtime/hook"
 	transporthttp "github.com/lumm2509/keel/transport/http"
 	"github.com/spf13/cobra"
@@ -30,102 +29,103 @@ var Version = "(untracked)"
 
 type ServeConfig = apis.ServeConfig
 
-type BootstrapEvent[C any] struct {
+type BootstrapEvent[T any] struct {
 	hook.Event
-	Container container.Container[C]
+	App *T
 }
 
-type TerminateEvent[C any] struct {
+type TerminateEvent[T any] struct {
 	hook.Event
-	Container container.Container[C]
+	App       *T
 	IsRestart bool
 }
 
-type ServeEvent[C any] struct {
+type ServeEvent[T any] struct {
 	hook.Event
-	Container   container.Container[C]
-	Router      *transporthttp.Router[*transporthttp.RequestEvent[C]]
+	App         *T
+	Router      *transporthttp.Router[*transporthttp.RequestEvent[T]]
 	Server      *stdhttp.Server
 	CertManager *autocert.Manager
 	Listener    net.Listener
 }
 
-type Config[Cradle any] struct {
-	Container       container.Container[Cradle]
+type Config[T any] struct {
 	HMR             commands.HMRFunc
 	HideStartBanner bool
 }
 
-func (cfg Config[Cradle]) apply(b *builderConfig[Cradle]) {
-	b.container = cfg.Container
+func (cfg Config[T]) apply(b *builderConfig[T]) {
 	b.hmr = cfg.HMR
 	b.hideStartBanner = cfg.HideStartBanner
 }
 
-type App[Cradle any] struct {
-	*transporthttp.Router[*transporthttp.RequestEvent[Cradle]]
+type App[T any] struct {
+	*transporthttp.Router[*transporthttp.RequestEvent[T]]
 
-	container       container.Container[Cradle]
+	context         *T
+	contextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
 	config          *config.ConfigModule
 	hmr             commands.HMRFunc
 	hideStartBanner bool
-	onBootstrap     *hook.Hook[*BootstrapEvent[Cradle]]
-	onServe         *hook.Hook[*ServeEvent[Cradle]]
-	onTerminate     *hook.Hook[*TerminateEvent[Cradle]]
+	bootstrapped    bool
+	onBootstrap     *hook.Hook[*BootstrapEvent[T]]
+	onServe         *hook.Hook[*ServeEvent[T]]
+	onTerminate     *hook.Hook[*TerminateEvent[T]]
 
 	rootCmd *cobra.Command
 }
 
-type Option[Cradle any] interface {
-	apply(*builderConfig[Cradle])
+type Option[T any] interface {
+	apply(*builderConfig[T])
 }
 
-type builderConfig[Cradle any] struct {
-	container       container.Container[Cradle]
-	config          *config.ConfigModule
-	cradle          *Cradle
-	hmr             commands.HMRFunc
+type builderConfig[T any] struct {
+	context        *T
+	contextFactory func(stdhttp.ResponseWriter, *stdhttp.Request) *T
+	config         *config.ConfigModule
+	hmr            commands.HMRFunc
 	hideStartBanner bool
 }
 
-type optionFunc[Cradle any] func(*builderConfig[Cradle])
+type optionFunc[T any] func(*builderConfig[T])
 
-func (fn optionFunc[Cradle]) apply(cfg *builderConfig[Cradle]) {
+func (fn optionFunc[T]) apply(cfg *builderConfig[T]) {
 	fn(cfg)
 }
 
-func WithCradle[Cradle any](cradle Cradle) Option[Cradle] {
-	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
-		value := cradle
-		cfg.cradle = &value
+// WithContext sets the app-scoped context that will be shared across all requests.
+func WithContext[T any](ctx *T) Option[T] {
+	return optionFunc[T](func(cfg *builderConfig[T]) {
+		cfg.context = ctx
 	})
 }
 
-func WithConfig[Cradle any](cfgModule *config.ConfigModule) Option[Cradle] {
-	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
+// WithContextFactory sets a per-request factory that creates a new T for each request.
+func WithContextFactory[T any](fn func(stdhttp.ResponseWriter, *stdhttp.Request) *T) Option[T] {
+	return optionFunc[T](func(cfg *builderConfig[T]) {
+		cfg.contextFactory = fn
+	})
+}
+
+func WithConfig[T any](cfgModule *config.ConfigModule) Option[T] {
+	return optionFunc[T](func(cfg *builderConfig[T]) {
 		cfg.config = cfgModule
 	})
 }
 
-func WithContainer[Cradle any](ctr container.Container[Cradle]) Option[Cradle] {
-	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
-		cfg.container = ctr
-	})
-}
-
-func WithHMR[Cradle any](hmr commands.HMRFunc) Option[Cradle] {
-	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
+func WithHMR[T any](hmr commands.HMRFunc) Option[T] {
+	return optionFunc[T](func(cfg *builderConfig[T]) {
 		cfg.hmr = hmr
 	})
 }
 
-func WithHideStartBanner[Cradle any](hide bool) Option[Cradle] {
-	return optionFunc[Cradle](func(cfg *builderConfig[Cradle]) {
+func WithHideStartBanner[T any](hide bool) Option[T] {
+	return optionFunc[T](func(cfg *builderConfig[T]) {
 		cfg.hideStartBanner = hide
 	})
 }
 
-func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
+func New[T any](options ...Option[T]) *App[T] {
 	executableName := filepath.Base(os.Args[0])
 	builtConfig := resolveAppConfig(options...)
 
@@ -139,23 +139,29 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 		SilenceUsage: true,
 	}
 
-	app := &App[Cradle]{
-		container:       builtConfig.container,
-		config:          builtConfig.config,
-		hmr:             builtConfig.hmr,
+	app := &App[T]{
+		context:        builtConfig.context,
+		contextFactory: builtConfig.contextFactory,
+		config:         builtConfig.config,
+		hmr:            builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
-		rootCmd:         rootCmd,
+		rootCmd:        rootCmd,
 	}
 
 	requestEventPool := sync.Pool{
 		New: func() any {
-			return &transporthttp.RequestEvent[Cradle]{}
+			return &transporthttp.RequestEvent[T]{}
 		},
 	}
 
-	app.Router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[Cradle], transporthttp.EventCleanupFunc) {
-		event := requestEventPool.Get().(*transporthttp.RequestEvent[Cradle])
-		event.Reset(app.container, w, r)
+	app.Router = transporthttp.NewRouter(func(w stdhttp.ResponseWriter, r *stdhttp.Request) (*transporthttp.RequestEvent[T], transporthttp.EventCleanupFunc) {
+		event := requestEventPool.Get().(*transporthttp.RequestEvent[T])
+
+		ctx := app.context
+		if app.contextFactory != nil {
+			ctx = app.contextFactory(w, r)
+		}
+		event.Reset(ctx, w, r)
 
 		return event, func() {
 			event.Release()
@@ -169,8 +175,8 @@ func New[Cradle any](options ...Option[Cradle]) *App[Cradle] {
 	return app
 }
 
-func resolveAppConfig[Cradle any](options ...Option[Cradle]) builderConfig[Cradle] {
-	cfg := builderConfig[Cradle]{}
+func resolveAppConfig[T any](options ...Option[T]) builderConfig[T] {
+	cfg := builderConfig[T]{}
 
 	for _, option := range options {
 		if option != nil {
@@ -178,42 +184,14 @@ func resolveAppConfig[Cradle any](options ...Option[Cradle]) builderConfig[Cradl
 		}
 	}
 
-	cfg.config = normalizeConfigModule(cfg.config)
-
-	if cfg.container == nil {
-		cfg.container = container.LoadBasecontainer(cfg.config, cfg.cradle)
+	if cfg.config == nil {
+		cfg.config = &config.ConfigModule{}
 	}
 
 	return cfg
 }
 
-func normalizeConfigModule(cfg *config.ConfigModule) *config.ConfigModule {
-	if cfg == nil {
-		cfg = &config.ConfigModule{}
-	}
-
-	if cfg.Projectconfig.DataDir == nil || *cfg.Projectconfig.DataDir == "" {
-		dataDir := filepath.Join(defaultBaseDir(), "pb_data")
-		cfg.Projectconfig.DataDir = &dataDir
-	}
-
-	if cfg.Projectconfig.EncryptionEnv == nil {
-		encryptionEnv := ""
-		cfg.Projectconfig.EncryptionEnv = &encryptionEnv
-	}
-
-	return cfg
-}
-
-func defaultBaseDir() string {
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		return wd
-	}
-
-	return filepath.Dir(os.Args[0])
-}
-
-func (a *App[Cradle]) Start() error {
+func (a *App[T]) Start() error {
 	if len(os.Args) == 1 {
 		a.rootCmd.SetArgs([]string{"develop"})
 	}
@@ -222,7 +200,7 @@ func (a *App[Cradle]) Start() error {
 	return a.Execute()
 }
 
-func (a *App[Cradle]) Execute() error {
+func (a *App[T]) Execute() error {
 	if !a.skipBootstrap() {
 		if err := a.bootstrap(); err != nil {
 			return err
@@ -249,41 +227,38 @@ func (a *App[Cradle]) Execute() error {
 	return <-done
 }
 
-func (a *App[Cradle]) bootstrap() error {
-	a.container.Logger().Info("application bootstrap started", "event", "app_bootstrap_started")
+func (a *App[T]) bootstrap() error {
+	event := &BootstrapEvent[T]{App: a.context}
 
-	event := &BootstrapEvent[Cradle]{Container: a.container}
-
-	err := a.OnBootstrap().Trigger(event, func(e *BootstrapEvent[Cradle]) error {
-		return e.Container.InitResources()
+	err := a.OnBootstrap().Trigger(event, func(e *BootstrapEvent[T]) error {
+		if init, ok := any(e.App).(interface{ Init() error }); ok {
+			return init.Init()
+		}
+		return e.Next()
 	})
-	if err == nil && !a.container.ResourcesReady() {
-		a.container.Logger().Warn("OnBootstrap hook didn't fail but container resources are still not initialized - maybe missing e.Next()?")
-	}
 	if err == nil {
-		a.container.Logger().Info("application bootstrap completed", "event", "app_bootstrap_completed")
+		a.bootstrapped = true
 	}
 
 	return err
 }
 
-func (a *App[Cradle]) terminate(isRestart bool) error {
-	event := &TerminateEvent[Cradle]{
-		Container: a.container,
+func (a *App[T]) terminate(isRestart bool) error {
+	event := &TerminateEvent[T]{
+		App:       a.context,
 		IsRestart: isRestart,
 	}
 
-	err := a.OnTerminate().Trigger(event, func(e *TerminateEvent[Cradle]) error {
-		return e.Container.ResetResources()
+	return a.OnTerminate().Trigger(event, func(e *TerminateEvent[T]) error {
+		if reset, ok := any(e.App).(interface{ Reset() error }); ok {
+			return reset.Reset()
+		}
+		return e.Next()
 	})
-	if err == nil {
-		a.container.Logger().Info("application terminated", "event", "app_terminated", "restart", isRestart)
-	}
-	return err
 }
 
-func (a *App[Cradle]) skipBootstrap() bool {
-	if a.container == nil || a.container.ResourcesReady() {
+func (a *App[T]) skipBootstrap() bool {
+	if a.bootstrapped {
 		return true
 	}
 
@@ -311,36 +286,37 @@ func (a *App[Cradle]) skipBootstrap() bool {
 	return false
 }
 
-func (a *App[Cradle]) OnBootstrap() *hook.Hook[*BootstrapEvent[Cradle]] {
+func (a *App[T]) OnBootstrap() *hook.Hook[*BootstrapEvent[T]] {
 	if a.onBootstrap == nil {
-		a.onBootstrap = &hook.Hook[*BootstrapEvent[Cradle]]{}
+		a.onBootstrap = &hook.Hook[*BootstrapEvent[T]]{}
 	}
 	return a.onBootstrap
 }
 
-func (a *App[Cradle]) OnServe() *hook.Hook[*ServeEvent[Cradle]] {
+func (a *App[T]) OnServe() *hook.Hook[*ServeEvent[T]] {
 	if a.onServe == nil {
-		a.onServe = &hook.Hook[*ServeEvent[Cradle]]{}
+		a.onServe = &hook.Hook[*ServeEvent[T]]{}
 	}
 	return a.onServe
 }
 
-func (a *App[Cradle]) OnTerminate() *hook.Hook[*TerminateEvent[Cradle]] {
+func (a *App[T]) OnTerminate() *hook.Hook[*TerminateEvent[T]] {
 	if a.onTerminate == nil {
-		a.onTerminate = &hook.Hook[*TerminateEvent[Cradle]]{}
+		a.onTerminate = &hook.Hook[*TerminateEvent[T]]{}
 	}
 	return a.onTerminate
 }
 
-func (a *App[Cradle]) Container() container.Container[Cradle] {
-	return a.container
+// Context returns the app-scoped T provided via WithContext.
+func (a *App[T]) Context() *T {
+	return a.context
 }
 
-func (a *App[Cradle]) Config() *config.ConfigModule {
+func (a *App[T]) Config() *config.ConfigModule {
 	return a.config
 }
 
-func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
+func (a *App[T]) newDevelopCommand() *cobra.Command {
 	return commands.NewDevelopCommand(
 		a.hmr,
 		!a.hideStartBanner,
@@ -354,8 +330,8 @@ func (a *App[Cradle]) newDevelopCommand() *cobra.Command {
 	)
 }
 
-func (a *App[Cradle]) serve(config ServeConfig) error {
-	prepared, err := apis.PrepareServe(a.container, a.config, config, a.Router)
+func (a *App[T]) serve(config ServeConfig) error {
+	prepared, err := apis.PrepareServe(a.context, a.config, config, a.Router)
 	if err != nil {
 		return err
 	}
@@ -364,9 +340,9 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	var listener net.Listener
 	var wg sync.WaitGroup
 
-	a.OnTerminate().Bind(&hook.Handler[*TerminateEvent[Cradle]]{
+	a.OnTerminate().Bind(&hook.Handler[*TerminateEvent[T]]{
 		Id: "keelGracefulShutdown",
-		Func: func(te *TerminateEvent[Cradle]) error {
+		Func: func(te *TerminateEvent[T]) error {
 			prepared.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -393,15 +369,15 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 		}
 	}()
 
-	serveEvent := &ServeEvent[Cradle]{
-		Container:   a.container,
+	serveEvent := &ServeEvent[T]{
+		App:         a.context,
 		Router:      prepared.Router,
 		Server:      prepared.Server,
 		CertManager: prepared.CertManager,
 		Listener:    prepared.Listener,
 	}
 
-	if err := a.OnServe().Trigger(serveEvent, func(e *ServeEvent[Cradle]) error {
+	if err := a.OnServe().Trigger(serveEvent, func(e *ServeEvent[T]) error {
 		return e.Next()
 	}); err != nil {
 		return err
@@ -425,14 +401,6 @@ func (a *App[Cradle]) serve(config ServeConfig) error {
 	if config.ShowStartBanner {
 		apis.StartBanner(baseURL)
 	}
-
-	a.container.Logger().Info(
-		"application server started",
-		"event", "app_server_started",
-		"addr", listener.Addr().String(),
-		"base_url", baseURL,
-		"https", config.HttpsAddr != "",
-	)
 
 	if config.HttpsAddr != "" {
 		if config.HttpAddr != "" && prepared.CertManager != nil {

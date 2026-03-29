@@ -5,11 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/lumm2509/keel/config"
+	transporthttp "github.com/lumm2509/keel/transport/http"
 )
 
 type capturedRecord struct {
@@ -62,6 +64,15 @@ func (h *captureHandler) WithGroup(string) slog.Handler {
 	return h
 }
 
+// testApp implements TrustedProxyProvider so that ClientIP respects X-Forwarded-For
+// when the direct peer is in the 10.0.0.0/8 range.
+type testApp struct{}
+
+func (*testApp) TrustedProxyRanges() []netip.Prefix {
+	prefix, _ := netip.ParsePrefix("10.0.0.0/8")
+	return []netip.Prefix{prefix}
+}
+
 func TestDefaultObservabilityCapturesRequestContext(t *testing.T) {
 	t.Parallel()
 
@@ -70,23 +81,34 @@ func TestDefaultObservabilityCapturesRequestContext(t *testing.T) {
 	logger := slog.New(handler)
 	cfg := newTestConfig(logger)
 
-	app := Default[struct{}](WithConfig[struct{}](cfg))
+	app := Default[testApp](WithConfig[testApp](cfg), WithContext(&testApp{}))
 
-	app.GET("/users/{id}", func(c *Context[struct{}]) error {
-		if c.RequestID() != "req-123" {
-			t.Fatalf("expected request ID to be propagated")
+	app.GET("/users/{id}", func(c *Context[testApp]) error {
+		requestID, _ := c.Get(EventKeyRequestID).(string)
+		if requestID != "req-123" {
+			t.Fatalf("expected request ID to be propagated, got %q", requestID)
 		}
-		if c.StartTime().IsZero() {
+
+		startTime, _ := c.Get(EventKeyStartTime).(interface{ IsZero() bool })
+		if startTime == nil || startTime.IsZero() {
 			t.Fatalf("expected request start time to be set")
 		}
+
 		if c.ClientIP() != "203.0.113.10" {
 			t.Fatalf("expected forwarded client IP, got %q", c.ClientIP())
 		}
-		if c.RoutePattern() != "/users/{id}" {
-			t.Fatalf("expected route pattern, got %q", c.RoutePattern())
+
+		routePattern, _ := c.Get(transporthttp.EventKeyRoutePattern).(string)
+		if routePattern != "/users/{id}" {
+			t.Fatalf("expected route pattern, got %q", routePattern)
 		}
 
-		c.Logger().Info("handler log")
+		contextLogger, _ := c.Get(EventKeyLogger).(*slog.Logger)
+		if contextLogger == nil {
+			t.Fatal("expected contextual logger to be set")
+		}
+		contextLogger.Info("handler log")
+
 		return c.JSON(http.StatusCreated, map[string]string{"ok": "true"})
 	})
 
@@ -179,11 +201,6 @@ func TestDefaultObservabilityRecoversPanics(t *testing.T) {
 
 func newTestConfig(logger *slog.Logger) *config.ConfigModule {
 	return &config.ConfigModule{
-		Projectconfig: config.ProjectConfigOptions{
-			Http: &config.HttpConfigOptions{
-				TrustedProxyCIDRs: []string{"10.0.0.0/8"},
-			},
-		},
 		Logger: logger,
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/lumm2509/keel/config"
 )
 
-type Cradle struct {
+type MyApp struct {
 	Name    string
 	Version string
 }
@@ -23,72 +24,64 @@ func main() {
 		},
 	}
 
+	myApp := &MyApp{
+		Name:    "example",
+		Version: "0.1.0",
+	}
+
 	app := keel.New(
-		keel.WithConfig[Cradle](cfg),
-		keel.WithCradle(Cradle{
-			Name:    "example",
-			Version: "0.1.0",
-		}),
+		keel.WithConfig[MyApp](cfg),
+		keel.WithContext(myApp),
 	)
 
-	app.BindFunc(func(c *keel.Context[Cradle]) error {
+	app.BindFunc(func(c *keel.Context[MyApp]) error {
 		c.Set("requestStartedAt", time.Now().UTC())
 		c.Set("requestMethod", c.Request.Method)
 		return c.Next()
 	})
 
-	app.GET("/", func(c *keel.Context[Cradle]) error {
+	app.GET("/", func(c *keel.Context[MyApp]) error {
 		return c.JSON(http.StatusOK, map[string]any{
-			"service": c.Cradle().Name,
-			"version": c.Cradle().Version,
+			"service": c.App.Name,
+			"version": c.App.Version,
 			"env":     env,
 			"isDev":   app.Config().Projectconfig.IsDev,
 		})
 	})
 
-	app.GET("/health", func(c *keel.Context[Cradle]) error {
+	app.GET("/health", func(c *keel.Context[MyApp]) error {
 		return c.JSON(http.StatusOK, map[string]any{
 			"ok":        true,
 			"method":    c.Get("requestMethod"),
 			"startedAt": c.Get("requestStartedAt"),
-			"hasDB":     c.Container.DataBase() != nil,
 		})
 	})
 
 	api := app.Group("/api")
-	api.BindFunc(func(c *keel.Context[Cradle]) error {
+	api.BindFunc(func(c *keel.Context[MyApp]) error {
 		c.Set("scope", "api")
 		return c.Next()
 	})
-	api.GET("/me", func(c *keel.Context[Cradle]) error {
+	api.GET("/me", func(c *keel.Context[MyApp]) error {
 		return c.JSON(http.StatusOK, map[string]any{
-			"name":    c.Cradle().Name,
-			"version": c.Cradle().Version,
+			"name":    c.App.Name,
+			"version": c.App.Version,
 			"scope":   c.Get("scope"),
 		})
 	})
 
-	admin := api.Group("/admin")
-	admin.GET("/summary", func(c *keel.Context[Cradle]) error {
-		return c.JSON(http.StatusOK, map[string]any{
-			"storeSize": c.Container.Store().Length(),
-			"isDev":     c.Container.IsDev(),
-			"brokerUp":  c.Container.SubscriptionsBroker() != nil,
-		})
-	})
-
-	app.OnBootstrap().BindFunc(func(e *keel.BootstrapEvent[Cradle]) error {
-		e.Container.Store().Set("bootedAt", time.Now().UTC())
+	app.OnBootstrap().BindFunc(func(e *keel.BootstrapEvent[MyApp]) error {
+		slog.Info("application bootstrapped", "name", e.App.Name)
 		return e.Next()
 	})
 
-	app.OnServe().BindFunc(func(e *keel.ServeEvent[Cradle]) error {
-		e.Container.Logger().Info("HTTP server starting", "addr", e.Server.Addr)
+	app.OnServe().BindFunc(func(e *keel.ServeEvent[MyApp]) error {
+		slog.Info("HTTP server starting", "addr", e.Server.Addr)
 		return e.Next()
 	})
 
-	app.OnTerminate().BindFunc(func(e *keel.TerminateEvent[Cradle]) error {
-		e.Container.Logger().Info("application shutting down", "restart", e.IsRestart)
+	app.OnTerminate().BindFunc(func(e *keel.TerminateEvent[MyApp]) error {
+		slog.Info("application shutting down", "restart", e.IsRestart)
 		return e.Next()
 	})
 

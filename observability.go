@@ -14,33 +14,64 @@ import (
 
 const requestIDHeader = "X-Request-ID"
 
-func Default[Cradle any](options ...Option[Cradle]) *App[Cradle] {
+// EventKeyRequestID is the EventData key used by Observability to store the request ID.
+const EventKeyRequestID = "requestID"
+
+// EventKeyStartTime is the EventData key used by Observability to store the request start time.
+const EventKeyStartTime = "startTime"
+
+// EventKeyLogger is the EventData key used by Observability to store the contextual logger.
+const EventKeyLogger = "logger"
+
+func Default[T any](options ...Option[T]) *App[T] {
 	app := New(options...)
-	app.BindFunc(Observability[Cradle]())
+	var logger *slog.Logger
+	if app.config != nil && app.config.Logger != nil {
+		logger = app.config.Logger
+	}
+	app.BindFunc(Observability[T](logger))
 	return app
 }
 
-func Observability[Cradle any]() HandlerFunc[Cradle] {
-	return func(c *Context[Cradle]) (err error) {
+// Observability returns a middleware that sets a request ID, records start time,
+// stores a contextual logger, and logs request completion. All data is stored in
+// EventData and can be accessed via c.Get(EventKeyRequestID), c.Get(EventKeyLogger), etc.
+func Observability[T any](logger *slog.Logger) HandlerFunc[T] {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(c *Context[T]) (err error) {
 		start := time.Now().UTC()
-		c.SetStartTime(start)
+		c.Set(EventKeyStartTime, start)
 
 		requestID := c.Request.Header.Get(requestIDHeader)
 		if requestID == "" {
 			requestID = newRequestID()
 		}
-		c.SetRequestID(requestID)
-		c.SetLogger(c.Container.Logger())
+		c.Set(EventKeyRequestID, requestID)
+		c.Request.Header.Set(requestIDHeader, requestID)
+		c.Response.Header().Set(requestIDHeader, requestID)
+
+		routePattern, _ := c.Get(transporthttp.EventKeyRoutePattern).(string)
+		contextLogger := logger.With(
+			"request_id", requestID,
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"route", routePattern,
+		)
+		c.Set(EventKeyLogger, contextLogger)
 
 		defer func() {
+			routePattern, _ := c.Get(transporthttp.EventKeyRoutePattern).(string)
+			duration := time.Since(start)
 			attrs := []any{
 				"event", "http_request_completed",
-				"request_id", c.RequestID(),
+				"request_id", requestID,
 				"method", c.Request.Method,
 				"path", c.Request.URL.Path,
-				"route", c.RoutePattern(),
+				"route", routePattern,
 				"status", statusForLog(c),
-				"duration_ms", durationMs(c.Duration()),
+				"duration_ms", durationMs(duration),
 				"ip", c.ClientIP(),
 				"user_agent", c.Request.UserAgent(),
 				"bytes_written", c.BytesWritten(),
@@ -49,7 +80,7 @@ func Observability[Cradle any]() HandlerFunc[Cradle] {
 				attrs = append(attrs, "error", err.Error())
 			}
 
-			c.Logger().LogAttrs(
+			contextLogger.LogAttrs(
 				c.Request.Context(),
 				completionLevel(statusForLog(c), err),
 				"http request completed",
@@ -60,14 +91,16 @@ func Observability[Cradle any]() HandlerFunc[Cradle] {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				panicErr := fmt.Errorf("panic: %v", recovered)
+				routePattern, _ := c.Get(transporthttp.EventKeyRoutePattern).(string)
+				duration := time.Since(start)
 				attrs := []any{
 					"event", "http_request_panic",
-					"request_id", c.RequestID(),
+					"request_id", requestID,
 					"method", c.Request.Method,
 					"path", c.Request.URL.Path,
-					"route", c.RoutePattern(),
+					"route", routePattern,
 					"status", http.StatusInternalServerError,
-					"duration_ms", durationMs(c.Duration()),
+					"duration_ms", durationMs(duration),
 					"ip", c.ClientIP(),
 					"user_agent", c.Request.UserAgent(),
 					"bytes_written", c.BytesWritten(),
@@ -75,7 +108,7 @@ func Observability[Cradle any]() HandlerFunc[Cradle] {
 					"stack_trace", string(debug.Stack()),
 				}
 
-				c.Logger().LogAttrs(
+				contextLogger.LogAttrs(
 					c.Request.Context(),
 					slog.LevelError,
 					"http request panic",
@@ -111,7 +144,7 @@ func durationMs(duration time.Duration) float64 {
 	return float64(duration) / float64(time.Millisecond)
 }
 
-func statusForLog[Cradle any](c *Context[Cradle]) int {
+func statusForLog[T any](c *Context[T]) int {
 	if status := c.Status(); status > 0 {
 		return status
 	}

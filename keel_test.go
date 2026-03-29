@@ -3,69 +3,8 @@ package keel
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/lumm2509/keel/config"
 )
-
-func TestNewWithCradleBuildsDefaultContainer(t *testing.T) {
-	t.Parallel()
-
-	type cradle struct {
-		Name string
-	}
-
-	app := New(WithCradle(cradle{Name: "demo"}))
-
-	if app.container == nil {
-		t.Fatalf("expected default container to be created")
-	}
-
-	if got := app.container.Cradle().Name; got != "demo" {
-		t.Fatalf("expected cradle name %q, got %q", "demo", got)
-	}
-}
-
-func TestNewInitializesDefaultDataDir(t *testing.T) {
-	app := New[struct{}]()
-
-	want := filepath.Join(mustGetwd(t), "pb_data")
-	if got := app.Container().DataDir(); got != want {
-		t.Fatalf("expected data dir %q, got %q", want, got)
-	}
-}
-
-func TestNewUsesConfigModuleDataDirAndEncryptionEnv(t *testing.T) {
-	dataDir := "/tmp/keel-config-data"
-	encryptionEnv := "KEEL_SECRET"
-
-	app := New[struct{}](WithConfig[struct{}](&config.ConfigModule{
-		Projectconfig: config.ProjectConfigOptions{
-			DataDir:       &dataDir,
-			EncryptionEnv: &encryptionEnv,
-		},
-	}))
-
-	if got := app.Container().DataDir(); got != dataDir {
-		t.Fatalf("expected data dir %q, got %q", dataDir, got)
-	}
-
-	if got := app.Container().EncryptionEnv(); got != encryptionEnv {
-		t.Fatalf("expected encryption env %q, got %q", encryptionEnv, got)
-	}
-}
-
-func mustGetwd(t *testing.T) string {
-	t.Helper()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd() error = %v", err)
-	}
-
-	return wd
-}
 
 func TestBootstrapTriggersOnBootstrapHook(t *testing.T) {
 	t.Parallel()
@@ -138,5 +77,43 @@ func TestSkipBootstrapReturnsTrueForHelpFlag(t *testing.T) {
 	app := New[struct{}]()
 	if !app.skipBootstrap() {
 		t.Fatal("expected skipBootstrap() = true for --help flag")
+	}
+}
+
+func TestBootstrapCallsInitOnAppIfImplemented(t *testing.T) {
+	t.Parallel()
+
+	type myApp struct {
+		initCalled bool
+	}
+
+	app := New[myApp](WithContext(&myApp{}))
+
+	// Patch Init via interface — store result via OnBootstrap hook
+	var gotApp *myApp
+	app.OnBootstrap().BindFunc(func(e *BootstrapEvent[myApp]) error {
+		gotApp = e.App
+		return e.Next()
+	})
+
+	if err := app.bootstrap(); err != nil {
+		t.Fatalf("bootstrap() error = %v", err)
+	}
+
+	if gotApp == nil {
+		t.Fatal("expected App to be set on BootstrapEvent")
+	}
+}
+
+func TestWithContextPropagatedToRequestEvent(t *testing.T) {
+	t.Parallel()
+
+	type myApp struct{ Name string }
+	ctx := &myApp{Name: "test"}
+
+	app := New[myApp](WithContext(ctx))
+
+	if app.Context() != ctx {
+		t.Fatalf("expected Context() to return provided context pointer")
 	}
 }

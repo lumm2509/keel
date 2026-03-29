@@ -20,7 +20,7 @@ Some parts are core, some are experimental, and some are here because they are u
 
 If you're using `keel` the normal way, the flow is:
 
-`New -> register routes -> Run`
+`New -> register routes -> Start`
 
 That's the main story.
 Not because every other path is illegal, but because frameworks get stupid fast when they try to have 4 "official" ways of doing the same thing.
@@ -41,22 +41,22 @@ type Cradle struct {
 
 func main() {
     app := keel.New(
-        keel.WithCradle(Cradle{Name: "myapp"}),
+        keel.WithContext(&Cradle{Name: "myapp"}),
     )
 
-    app.Use(func(c *keel.Context[Cradle]) error {
+    app.BindFunc(func(c *keel.Context[Cradle]) error {
         c.Set("scope", "public")
         return c.Next()
     })
 
-    app.Get("/health", func(c *keel.Context[Cradle]) error {
+    app.GET("/health", func(c *keel.Context[Cradle]) error {
         return c.JSON(http.StatusOK, map[string]any{
             "ok":   true,
-            "name": c.Cradle().Name,
+            "name": c.App.Name,
         })
     })
 
-    if err := app.Run(); err != nil {
+    if err := app.Start(); err != nil {
         log.Fatal(err)
     }
 }
@@ -68,8 +68,8 @@ func main() {
 
 At its core, `keel` is built around a few things:
 
-* a typed dependency bundle (`Cradle`)
-* an app/container boundary
+* a typed app context
+* an app/runtime boundary
 * a request event/context
 * lifecycle hooks
 * a small HTTP facade on top of stdlib-first plumbing
@@ -139,7 +139,7 @@ These are the parts that will bite you if you ignore them.
 
 * The normal route registration path is the facade. If something lower-level exists, that does **not** automatically make it part of the main public story.
 * Hook and middleware flow is manual-chain based. If you do not call `Next()`, the chain does not continue. Revolutionary, I know.
-* The container is app/runtime scope, not an excuse to turn every handler into a dependency landfill.
+* The app context is app/runtime scope, not an excuse to turn every handler into a dependency landfill.
 * `ConfigModule` is not supposed to become a trash bag for every feature that might someday exist.
 * Not every capability in the repo is equally public, equally stable, or equally important. That is intentional.
 

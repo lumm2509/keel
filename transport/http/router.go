@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/lumm2509/keel/runtime/hook"
@@ -141,7 +142,12 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 
 				event, cleanupFunc := r.eventFactory(resp, req)
 				if setter, ok := any(event).(eventDataSetter); ok {
-					setter.Set(EventKeyRoutePattern, routePattern)
+					// Store only the path portion (strip "METHOD " prefix if present).
+					patternPath := routePattern
+					if _, route, ok := strings.Cut(routePattern, " "); ok && strings.HasPrefix(route, "/") {
+						patternPath = route
+					}
+					setter.Set(EventKeyRoutePattern, patternPath)
 				}
 
 				var err error
