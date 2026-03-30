@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -189,5 +190,40 @@ func TestRouteUnbind(t *testing.T) {
 		if !slices.Contains(excluded, id) {
 			t.Fatalf("Expected %q to be marked as excluded", id)
 		}
+	}
+}
+
+func TestRouteWithHandle(t *testing.T) {
+	t.Parallel()
+
+	type meta struct{ Role string }
+
+	r := Route[*Event]{}
+	r.WithHandle(meta{Role: "admin"})
+
+	got, ok := r.Handle.(meta)
+	if !ok {
+		t.Fatalf("expected Handle to be meta, got %T", r.Handle)
+	}
+	if got.Role != "admin" {
+		t.Fatalf("expected Role %q, got %q", "admin", got.Role)
+	}
+}
+
+func TestRouteOnError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("sentinel")
+
+	r := Route[*Event]{}
+	r.OnError(func(e *Event, err error) error {
+		return sentinel
+	})
+
+	if r.ErrorHandler == nil {
+		t.Fatal("expected ErrorHandler to be set")
+	}
+	if got := r.ErrorHandler(nil, errors.New("any")); !errors.Is(got, sentinel) {
+		t.Fatalf("expected sentinel, got %v", got)
 	}
 }

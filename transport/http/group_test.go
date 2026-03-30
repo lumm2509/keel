@@ -453,3 +453,21 @@ func TestRouterGroupHasRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestRouterGroupOnError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("sentinel")
+
+	g := RouterGroup[*Event]{}
+	g.OnError(func(e *Event, err error) error {
+		return sentinel
+	})
+
+	if g.ErrorHandler == nil {
+		t.Fatal("expected ErrorHandler to be set")
+	}
+	if got := g.ErrorHandler(nil, errors.New("any")); !errors.Is(got, sentinel) {
+		t.Fatalf("expected sentinel, got %v", got)
+	}
+}

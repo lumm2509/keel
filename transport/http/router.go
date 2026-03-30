@@ -14,8 +14,11 @@ import (
 	"github.com/lumm2509/keel/runtime/hook"
 )
 
-// EventKeyRoutePattern is the EventData key used by the router to expose the matched route pattern.
+// EventKeyRoutePattern is the EventData key used by the router to expose the matched route path.
 const EventKeyRoutePattern = "routePattern"
+
+// EventKeyRouteHandle is the EventData key used by the router to expose the route's Handle metadata.
+const EventKeyRouteHandle = "routeHandle"
 
 type eventDataSetter interface {
 	Set(key string, value any)
@@ -66,6 +69,8 @@ type Router[T hook.Resolver] struct {
 	*RouterGroup[T]
 
 	eventFactory EventFactoryFunc[T]
+	mu           sync.RWMutex
+	cachedMux    http.Handler
 }
 
 // NewRouter creates a new Router instance with the provided event factory function.
@@ -76,8 +81,61 @@ func NewRouter[T hook.Resolver](eventFactory EventFactoryFunc[T]) *Router[T] {
 	}
 }
 
-// BuildMux constructs a new mux [http.Handler] instance from the current router configurations.
 func (r *Router[T]) BuildMux() (http.Handler, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	mux, err := r.buildMuxLocked()
+	if err != nil {
+		return nil, err
+	}
+
+	r.cachedMux = mux
+	return mux, nil
+}
+
+func (r *Router[T]) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.mu.RLock()
+		mux := r.cachedMux
+		r.mu.RUnlock()
+
+		if mux == nil {
+			r.mu.Lock()
+			if r.cachedMux == nil {
+				built, err := r.buildMuxLocked()
+				if err != nil {
+					r.mu.Unlock()
+					http.Error(w, "router: build error: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				r.cachedMux = built
+			}
+			mux = r.cachedMux
+			r.mu.Unlock()
+		}
+
+		mux.ServeHTTP(w, req)
+	})
+}
+
+func (r *Router[T]) Patch(fn func(*Router[T])) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	fn(r)
+
+	mux, err := r.buildMuxLocked()
+	if err != nil {
+		return err
+	}
+
+	r.cachedMux = mux
+	return nil
+}
+
+// buildMuxLocked is the internal builder. Caller must hold r.mu write lock.
+func (r *Router[T]) buildMuxLocked() (*http.ServeMux, error) {
 	// Note that some of the default std Go handlers like the [http.NotFoundHandler]
 	// cannot be currently extended and requires defining a custom "catch-all" route
 	// so that the group middlewares could be executed.
@@ -99,14 +157,19 @@ func (r *Router[T]) BuildMux() (http.Handler, error) {
 }
 
 type routeBuildState[T hook.Resolver] struct {
-	prefix      string
-	middlewares []*hook.Handler[T]
+	prefix       string
+	middlewares  []*hook.Handler[T]
+	errorHandler func(T, error) error // nearest ancestor error boundary; nil = none
 }
 
 func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state routeBuildState[T]) error {
 	nextState := routeBuildState[T]{
-		prefix:      state.prefix + group.Prefix,
-		middlewares: hook.MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
+		prefix:       state.prefix + group.Prefix,
+		middlewares:  hook.MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
+		errorHandler: state.errorHandler,
+	}
+	if group.ErrorHandler != nil {
+		nextState.errorHandler = group.ErrorHandler
 	}
 
 	for _, child := range group.Children {
@@ -125,6 +188,11 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 			if v.Method != "" {
 				routePattern = v.Method + " " + routePattern
 			}
+
+			// Capture per-route values for the closure.
+			routeHandle := v.Handle
+			routeErrorHandler := v.ErrorHandler
+			groupErrorHandler := nextState.errorHandler
 
 			mux.HandleFunc(routePattern, func(resp http.ResponseWriter, req *http.Request) {
 				// wrap the response to add write and status tracking
@@ -148,6 +216,10 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 						patternPath = route
 					}
 					setter.Set(EventKeyRoutePattern, patternPath)
+
+					if routeHandle != nil {
+						setter.Set(EventKeyRouteHandle, routeHandle)
+					}
 				}
 
 				var err error
@@ -156,6 +228,17 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 				} else {
 					err = v.Action(event)
 				}
+
+				// Route-level error boundary (most specific).
+				if err != nil && routeErrorHandler != nil {
+					err = routeErrorHandler(event, err)
+				}
+
+				// Group-level error boundary (nearest ancestor).
+				if err != nil && groupErrorHandler != nil {
+					err = groupErrorHandler(event, err)
+				}
+
 				if err != nil {
 					ErrorHandler(resp, req, err)
 				}
