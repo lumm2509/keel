@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-func TestConfigModuleJSONTrustedProxyCIDRsRoundTrip(t *testing.T) {
+func TestConfigModuleAutoCertRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	raw := []byte(`{
-		"projectConfig": {
-			"isDev": true,
-			"http": {
-				"trustedProxyCidrs": ["10.0.0.0/8", "192.168.0.0/16"],
-				"allowedOrigins": ["https://example.com"]
+		"dataDir": "/var/data",
+		"http": {
+			"autoCert": {
+				"email": "admin@example.com",
+				"hostWhitelist": ["example.com"]
 			}
 		}
 	}`)
@@ -23,25 +23,32 @@ func TestConfigModuleJSONTrustedProxyCIDRsRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if !cfg.Projectconfig.IsDev {
-		t.Fatalf("IsDev = false, want true")
+	if cfg.DataDir == nil || *cfg.DataDir != "/var/data" {
+		t.Fatalf("DataDir = %v, want /var/data", cfg.DataDir)
 	}
-	if cfg.Projectconfig.Http == nil {
-		t.Fatalf("Http config = nil, want populated")
+	if cfg.Http == nil || cfg.Http.AutoCert == nil {
+		t.Fatalf("Http.AutoCert = nil, want populated")
 	}
-	if len(cfg.Projectconfig.Http.TrustedProxyCIDRs) != 2 {
-		t.Fatalf("TrustedProxyCIDRs len = %d, want 2", len(cfg.Projectconfig.Http.TrustedProxyCIDRs))
+	if cfg.Http.AutoCert.Email == nil || *cfg.Http.AutoCert.Email != "admin@example.com" {
+		t.Fatalf("Email = %v, want admin@example.com", cfg.Http.AutoCert.Email)
 	}
-	if cfg.Projectconfig.Http.TrustedProxyCIDRs[0] != "10.0.0.0/8" || cfg.Projectconfig.Http.TrustedProxyCIDRs[1] != "192.168.0.0/16" {
-		t.Fatalf("TrustedProxyCIDRs = %#v, want exact round trip", cfg.Projectconfig.Http.TrustedProxyCIDRs)
+	if len(cfg.Http.AutoCert.HostWhitelist) != 1 || cfg.Http.AutoCert.HostWhitelist[0] != "example.com" {
+		t.Fatalf("HostWhitelist = %v, want [example.com]", cfg.Http.AutoCert.HostWhitelist)
 	}
 }
 
-func TestProjectConfigOptionsZeroValuesRemainUsable(t *testing.T) {
+func TestConfigModuleZeroValueIsUsable(t *testing.T) {
 	t.Parallel()
 
 	var cfg ConfigModule
-	if cfg.Projectconfig.Http != nil {
-		t.Fatalf("Http config = %#v, want nil by default", cfg.Projectconfig.Http)
+
+	if cfg.Http != nil {
+		t.Fatalf("Http = %#v, want nil by default", cfg.Http)
+	}
+	if cfg.DataDir != nil {
+		t.Fatalf("DataDir = %v, want nil by default", cfg.DataDir)
+	}
+	if cfg.Logger != nil {
+		t.Fatalf("Logger = %v, want nil by default", cfg.Logger)
 	}
 }
