@@ -56,15 +56,19 @@ func (h *TaggedHook[T]) CanTriggerOn(tagsToCheck []string) bool {
 func (h *TaggedHook[T]) Bind(handler *Handler[T]) string {
 	fn := handler.Func
 
-	handler.Func = func(e T) error {
-		if h.CanTriggerOn(e.Tags()) {
-			return fn(e)
-		}
+	wrapped := &Handler[T]{
+		Id:       handler.Id,
+		Priority: handler.Priority,
+		Func: func(e T) error {
+			if h.CanTriggerOn(e.Tags()) {
+				return fn(e)
+			}
 
-		return e.Next()
+			return e.Next()
+		},
 	}
 
-	return h.mainHook.Bind(handler)
+	return h.mainHook.Bind(wrapped)
 }
 
 // BindFunc registers a new handler with the specified function.

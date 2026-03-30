@@ -58,8 +58,8 @@ func (r *RereadableReadCloser) Read(p []byte) (int, error) {
 			r.copy = newBufferWithFile(r.MaxMemory)
 		}
 
-		if n, err := r.copy.Write(p[:n]); err != nil {
-			return n, err
+		if _, werr := r.copy.Write(p[:n]); werr != nil {
+			return n, werr
 		}
 	}
 

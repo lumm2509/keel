@@ -51,11 +51,23 @@ type ServeEvent[T any] struct {
 }
 
 type Config[T any] struct {
+	Context         *T
+	ContextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
+	Module          *config.ConfigModule
 	HMR             commands.HMRFunc
 	HideStartBanner bool
 }
 
 func (cfg Config[T]) apply(b *builderConfig[T]) {
+	if cfg.Context != nil {
+		b.context = cfg.Context
+	}
+	if cfg.ContextFactory != nil {
+		b.contextFactory = cfg.ContextFactory
+	}
+	if cfg.Module != nil {
+		b.config = cfg.Module
+	}
 	b.hmr = cfg.HMR
 	b.hideStartBanner = cfg.HideStartBanner
 }
@@ -147,6 +159,9 @@ func New[T any](options ...Option[T]) *App[T] {
 		hmr:             builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
 		rootCmd:         rootCmd,
+		onBootstrap:     &hook.Hook[*BootstrapEvent[T]]{},
+		onServe:         &hook.Hook[*ServeEvent[T]]{},
+		onTerminate:     &hook.Hook[*TerminateEvent[T]]{},
 	}
 
 	requestEventPool := sync.Pool{
@@ -208,24 +223,28 @@ func (a *App[T]) Execute() error {
 		}
 	}
 
-	done := make(chan error, 1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
+	cmdDone := make(chan error, 1)
 	go func() {
-		sigch := make(chan os.Signal, 1)
-		signal.Notify(sigch, os.Interrupt, syscall.SIGTERM)
-		<-sigch
-		done <- a.terminate(false)
+		cmdDone <- a.rootCmd.ExecuteContext(ctx)
 	}()
 
-	go func() {
-		if err := a.rootCmd.ExecuteContext(context.Background()); err != nil {
-			done <- err
-			return
+	var cmdErr error
+	select {
+	case cmdErr = <-cmdDone:
+		stop()
+		if cmdErr != nil {
+			return cmdErr
 		}
-		done <- a.terminate(false)
-	}()
+	case <-ctx.Done():
+		stop()
+		cmdErr = <-cmdDone // drain the goroutine before proceeding
+		_ = cmdErr
+	}
 
-	return <-done
+	return a.terminate(false)
 }
 
 func (a *App[T]) bootstrap() error {
@@ -288,23 +307,14 @@ func (a *App[T]) skipBootstrap() bool {
 }
 
 func (a *App[T]) OnBootstrap() *hook.Hook[*BootstrapEvent[T]] {
-	if a.onBootstrap == nil {
-		a.onBootstrap = &hook.Hook[*BootstrapEvent[T]]{}
-	}
 	return a.onBootstrap
 }
 
 func (a *App[T]) OnServe() *hook.Hook[*ServeEvent[T]] {
-	if a.onServe == nil {
-		a.onServe = &hook.Hook[*ServeEvent[T]]{}
-	}
 	return a.onServe
 }
 
 func (a *App[T]) OnTerminate() *hook.Hook[*TerminateEvent[T]] {
-	if a.onTerminate == nil {
-		a.onTerminate = &hook.Hook[*TerminateEvent[T]]{}
-	}
 	return a.onTerminate
 }
 
@@ -337,6 +347,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 		return err
 	}
 	defer prepared.Close()
+	defer a.OnTerminate().Unbind("keelGracefulShutdown")
 
 	var listener net.Listener
 	var wg sync.WaitGroup

@@ -1,7 +1,8 @@
 package hook
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"sync"
 
 	"github.com/lumm2509/keel/infra/security"
@@ -71,13 +72,20 @@ func (h *Hook[T]) Bind(handler *Handler[T]) string {
 	if handler.Id == "" {
 		handler.Id = generateHookId()
 
-		// ensure that it doesn't exist
-	DUPLICATE_CHECK:
-		for _, existing := range h.handlers {
-			if existing.Id == handler.Id {
-				handler.Id = generateHookId()
-				goto DUPLICATE_CHECK
+		// Collision probability with a 20-char random ID is negligible,
+		// but regenerate on the rare off-chance.
+		for {
+			conflict := false
+			for _, existing := range h.handlers {
+				if existing.Id == handler.Id {
+					conflict = true
+					break
+				}
 			}
+			if !conflict {
+				break
+			}
+			handler.Id = generateHookId()
 		}
 	} else {
 		// replace existing
@@ -96,8 +104,8 @@ func (h *Hook[T]) Bind(handler *Handler[T]) string {
 	}
 
 	// sort handlers by Priority, preserving the original order of equal items
-	sort.SliceStable(h.handlers, func(i, j int) bool {
-		return h.handlers[i].Priority < h.handlers[j].Priority
+	slices.SortStableFunc(h.handlers, func(a, b *Handler[T]) int {
+		return cmp.Compare(a.Priority, b.Priority)
 	})
 
 	return handler.Id
