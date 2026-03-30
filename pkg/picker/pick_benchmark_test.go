@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lumm2509/keel/pkg/search"
 )
 
 func BenchmarkPickSearchResult(b *testing.B) {
@@ -26,7 +25,7 @@ func BenchmarkPickSearchResult(b *testing.B) {
 		})
 	}
 
-	data := search.Result{
+	data := Result{
 		Page:       1,
 		PerPage:    50,
 		TotalItems: 500,
@@ -73,7 +72,7 @@ func legacyPick(data any, rawFields string) (any, error) {
 
 	var isSearchResult bool
 	switch data.(type) {
-	case search.Result, *search.Result:
+	case Result, *Result:
 		isSearchResult = true
 	}
 

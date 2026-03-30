@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/lumm2509/keel/pkg/picker"
-	"github.com/lumm2509/keel/pkg/search"
 )
 
 type typedPickerItem struct {
@@ -133,7 +132,7 @@ func TestPickFields(t *testing.T) {
 		},
 		{
 			"SearchResult",
-			search.Result{
+			picker.Result{
 				Page:       1,
 				PerPage:    10,
 				TotalItems: 20,
@@ -149,7 +148,7 @@ func TestPickFields(t *testing.T) {
 		},
 		{
 			"*SearchResult",
-			&search.Result{
+			&picker.Result{
 				Page:       1,
 				PerPage:    10,
 				TotalItems: 20,
@@ -165,7 +164,7 @@ func TestPickFields(t *testing.T) {
 		},
 		{
 			"SearchResult typed items",
-			search.Result{
+			picker.Result{
 				Page:       1,
 				PerPage:    10,
 				TotalItems: 20,
@@ -181,7 +180,7 @@ func TestPickFields(t *testing.T) {
 		},
 		{
 			"root wildcard",
-			&search.Result{
+			&picker.Result{
 				Page:       1,
 				PerPage:    10,
 				TotalItems: 20,

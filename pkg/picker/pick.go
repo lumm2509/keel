@@ -5,9 +5,19 @@ import (
 	"strings"
 
 	"github.com/lumm2509/keel/infra/store"
-	"github.com/lumm2509/keel/pkg/search"
 	"github.com/lumm2509/keel/pkg/tokenizer"
 )
+
+// Result is the standard paginated search result returned by a Provider.
+// It is defined here so that Pick can apply field selection directly to it
+// without needing an external search package dependency.
+type Result struct {
+	Items      any `json:"items"`
+	Page       int `json:"page"`
+	PerPage    int `json:"perPage"`
+	TotalItems int `json:"totalItems"`
+	TotalPages int `json:"totalPages"`
+}
 
 var pickFieldTreeCache = store.New[string, *fieldTree](nil)
 
@@ -37,7 +47,7 @@ func Pick(data any, rawFields string) (any, error) {
 		return projectPickedValue(v, tree)
 	case []any:
 		return projectPickedValue(v, tree)
-	case search.Result:
+	case Result:
 		cloned := v
 		cloned.Items, err = normalizePickItems(v.Items)
 		if err != nil {
@@ -47,7 +57,7 @@ func Pick(data any, rawFields string) (any, error) {
 			return nil, err
 		}
 		return cloned, nil
-	case *search.Result:
+	case *Result:
 		if v == nil {
 			return nil, nil
 		}
