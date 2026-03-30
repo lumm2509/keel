@@ -188,6 +188,9 @@ func (e *RequestEvent[T]) initRequestInfo() error {
 		}
 	}
 
+	// Header names are normalized to snake_case.
+	// e.g. "Content-Type" → "content_type", "X-Request-ID" → "x_request_id".
+	// Use e.Request.Header directly if you need the original canonical names.
 	for k, v := range e.Request.Header {
 		if len(v) > 0 {
 			info.Headers[inflector.Snakecase(k)] = v[0]

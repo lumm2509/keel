@@ -99,7 +99,7 @@ func legacyBuildMux(r *Router[*Event]) (http.Handler, error) {
 }
 
 func legacyLoadMux(r *Router[*Event], mux *http.ServeMux, group *RouterGroup[*Event], parents []*RouterGroup[*Event]) error {
-	for _, child := range group.Children {
+	for _, child := range group.children {
 		switch v := child.(type) {
 		case *RouterGroup[*Event]:
 			if err := legacyLoadMux(r, mux, v, append(parents, group)); err != nil {
@@ -116,9 +116,9 @@ func legacyLoadMux(r *Router[*Event], mux *http.ServeMux, group *RouterGroup[*Ev
 			for _, p := range parents {
 				pattern += p.Prefix
 				for _, h := range p.Middlewares {
-					if _, ok := p.ExcludedMiddlewares[h.Id]; !ok {
-						if _, ok = group.ExcludedMiddlewares[h.Id]; !ok {
-							if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
+					if _, ok := p.excludedMiddlewares[h.Id]; !ok {
+						if _, ok = group.excludedMiddlewares[h.Id]; !ok {
+							if _, ok = v.excludedMiddlewares[h.Id]; !ok {
 								routeHook.Bind(h)
 							}
 						}
@@ -128,8 +128,8 @@ func legacyLoadMux(r *Router[*Event], mux *http.ServeMux, group *RouterGroup[*Ev
 
 			pattern += group.Prefix
 			for _, h := range group.Middlewares {
-				if _, ok := group.ExcludedMiddlewares[h.Id]; !ok {
-					if _, ok = v.ExcludedMiddlewares[h.Id]; !ok {
+				if _, ok := group.excludedMiddlewares[h.Id]; !ok {
+					if _, ok = v.excludedMiddlewares[h.Id]; !ok {
 						routeHook.Bind(h)
 					}
 				}
@@ -137,7 +137,7 @@ func legacyLoadMux(r *Router[*Event], mux *http.ServeMux, group *RouterGroup[*Ev
 
 			pattern += v.Path
 			for _, h := range v.Middlewares {
-				if _, ok := v.ExcludedMiddlewares[h.Id]; !ok {
+				if _, ok := v.excludedMiddlewares[h.Id]; !ok {
 					routeHook.Bind(h)
 				}
 			}

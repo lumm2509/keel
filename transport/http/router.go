@@ -165,21 +165,21 @@ type routeBuildState[T hook.Resolver] struct {
 func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state routeBuildState[T]) error {
 	nextState := routeBuildState[T]{
 		prefix:       state.prefix + group.Prefix,
-		middlewares:  MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
+		middlewares:  MergeIncludedHandlers(state.middlewares, group.excludedMiddlewares, group.Middlewares, group.excludedMiddlewares),
 		errorHandler: state.errorHandler,
 	}
 	if group.ErrorHandler != nil {
 		nextState.errorHandler = group.ErrorHandler
 	}
 
-	for _, child := range group.Children {
+	for _, child := range group.children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if err := r.loadMux(mux, v, nextState); err != nil {
 				return err
 			}
 		case *Route[T]:
-			routeHandlers := MergeIncludedHandlers(nextState.middlewares, v.ExcludedMiddlewares, v.Middlewares, v.ExcludedMiddlewares)
+			routeHandlers := MergeIncludedHandlers(nextState.middlewares, v.excludedMiddlewares, v.Middlewares, v.excludedMiddlewares)
 			hasMiddlewares := len(routeHandlers) > 0
 			var routeHook *hook.Hook[T]
 			if hasMiddlewares {

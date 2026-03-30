@@ -51,7 +51,7 @@ func TestRouteBind(t *testing.T) {
 
 	r := Route[*Event]{
 		// mock excluded middlewares to check whether the entry will be deleted
-		ExcludedMiddlewares: map[string]struct{}{"test2": {}},
+		excludedMiddlewares: map[string]struct{}{"test2": {}},
 	}
 
 	calls := ""
@@ -95,8 +95,8 @@ func TestRouteBind(t *testing.T) {
 	}
 
 	// ensures that the previously excluded middleware was removed
-	if len(r.ExcludedMiddlewares) != 0 {
-		t.Fatalf("Expected test2 to be removed from the excludedMiddlewares list, got %v", r.ExcludedMiddlewares)
+	if len(r.excludedMiddlewares) != 0 {
+		t.Fatalf("Expected test2 to be removed from the excludedMiddlewares list, got %v", r.excludedMiddlewares)
 	}
 }
 
@@ -183,10 +183,10 @@ func TestRouteUnbind(t *testing.T) {
 
 	// ensure that the id was added in the exclude list
 	excluded := []string{"test1", "test3"}
-	if len(r.ExcludedMiddlewares) != len(excluded) {
-		t.Fatalf("Expected excludes %v, got %v", excluded, r.ExcludedMiddlewares)
+	if len(r.excludedMiddlewares) != len(excluded) {
+		t.Fatalf("Expected excludes %v, got %v", excluded, r.excludedMiddlewares)
 	}
-	for id := range r.ExcludedMiddlewares {
+	for id := range r.excludedMiddlewares {
 		if !slices.Contains(excluded, id) {
 			t.Fatalf("Expected %q to be marked as excluded", id)
 		}

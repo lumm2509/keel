@@ -4,13 +4,13 @@ import "github.com/lumm2509/keel/runtime/hook"
 
 // Route represents a single registered route with its action and optional middleware chain.
 type Route[T hook.Resolver] struct {
-	ExcludedMiddlewares map[string]struct{}
+	excludedMiddlewares map[string]struct{}
 
 	Action       func(e T) error
 	Method       string
 	Path         string
 	Middlewares  []*hook.Handler[T]
-	Handle       any                 // arbitrary metadata readable by middleware via RouteHandleAs
+	Handle       any                  // arbitrary metadata readable by middleware via RouteHandleAs
 	ErrorHandler func(T, error) error // error boundary for this route; nil = propagate
 }
 
@@ -27,10 +27,10 @@ func (route *Route[T]) BindFunc(middlewareFuncs ...func(e T) error) *Route[T] {
 func (route *Route[T]) Bind(middlewares ...*hook.Handler[T]) *Route[T] {
 	route.Middlewares = AppendSortedHandlers(route.Middlewares, middlewares...)
 
-	if route.ExcludedMiddlewares != nil {
+	if route.excludedMiddlewares != nil {
 		for _, m := range middlewares {
 			if m.Id != "" {
-				delete(route.ExcludedMiddlewares, m.Id)
+				delete(route.excludedMiddlewares, m.Id)
 			}
 		}
 	}
@@ -51,10 +51,10 @@ func (route *Route[T]) Unbind(middlewareIds ...string) *Route[T] {
 			}
 		}
 
-		if route.ExcludedMiddlewares == nil {
-			route.ExcludedMiddlewares = map[string]struct{}{}
+		if route.excludedMiddlewares == nil {
+			route.excludedMiddlewares = map[string]struct{}{}
 		}
-		route.ExcludedMiddlewares[middlewareId] = struct{}{}
+		route.excludedMiddlewares[middlewareId] = struct{}{}
 	}
 
 	return route

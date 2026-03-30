@@ -18,7 +18,7 @@ func TestRouterGroupGroup(t *testing.T) {
 	g1 := g0.Group("test1")
 	g2 := g0.Group("test2")
 
-	if total := len(g0.Children); total != 2 {
+	if total := len(g0.children); total != 2 {
 		t.Fatalf("Expected %d child groups, got %d", 2, total)
 	}
 
@@ -73,7 +73,7 @@ func TestRouterGroupBind(t *testing.T) {
 
 	g := RouterGroup[*Event]{
 		// mock excluded middlewares to check whether the entry will be deleted
-		ExcludedMiddlewares: map[string]struct{}{"test2": {}},
+		excludedMiddlewares: map[string]struct{}{"test2": {}},
 	}
 
 	calls := ""
@@ -117,8 +117,8 @@ func TestRouterGroupBind(t *testing.T) {
 	}
 
 	// ensures that the previously excluded middleware was removed
-	if len(g.ExcludedMiddlewares) != 0 {
-		t.Fatalf("Expected test2 to be removed from the excludedMiddlewares list, got %v", g.ExcludedMiddlewares)
+	if len(g.excludedMiddlewares) != 0 {
+		t.Fatalf("Expected test2 to be removed from the excludedMiddlewares list, got %v", g.excludedMiddlewares)
 	}
 }
 
@@ -205,10 +205,10 @@ func TestRouterGroupUnbind(t *testing.T) {
 
 	// ensure that the ids were added in the exclude list
 	excluded := []string{"test1", "test3"}
-	if len(g.ExcludedMiddlewares) != len(excluded) {
-		t.Fatalf("Expected excludes %v, got %v", excluded, g.ExcludedMiddlewares)
+	if len(g.excludedMiddlewares) != len(excluded) {
+		t.Fatalf("Expected excludes %v, got %v", excluded, g.excludedMiddlewares)
 	}
-	for id := range g.ExcludedMiddlewares {
+	for id := range g.excludedMiddlewares {
 		if !slices.Contains(excluded, id) {
 			t.Fatalf("Expected %q to be marked as excluded", id)
 		}
@@ -230,19 +230,19 @@ func TestRouterGroupRoute(t *testing.T) {
 
 	// ensure that the route was registered only to the main one
 	// ---
-	if len(sub.Children) != 0 {
-		t.Fatalf("Expected no sub children, got %d", len(sub.Children))
+	if len(sub.children) != 0 {
+		t.Fatalf("Expected no sub children, got %d", len(sub.children))
 	}
 
-	if len(group.Children) != 2 {
-		t.Fatalf("Expected %d group children, got %d", 2, len(group.Children))
+	if len(group.children) != 2 {
+		t.Fatalf("Expected %d group children, got %d", 2, len(group.children))
 	}
 	// ---
 
 	// check the registered route
 	// ---
-	if route != group.Children[1] {
-		t.Fatalf("Expected group children %v, got %v", route, group.Children[1])
+	if route != group.children[1] {
+		t.Fatalf("Expected group children %v, got %v", route, group.children[1])
 	}
 
 	if route.Method != http.MethodPost {

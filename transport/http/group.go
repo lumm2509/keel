@@ -14,8 +14,8 @@ import (
 // (note: the struct is named RouterGroup instead of Group so that it can
 // be embedded in the Router without conflicting with the Group method)
 type RouterGroup[T hook.Resolver] struct {
-	ExcludedMiddlewares map[string]struct{}
-	Children            []any // *Route[T] or *RouterGroup[T]
+	excludedMiddlewares map[string]struct{}
+	children            []any // *Route[T] or *RouterGroup[T]
 
 	Prefix       string
 	Middlewares  []*hook.Handler[T]
@@ -28,7 +28,7 @@ func (group *RouterGroup[T]) Group(prefix string) *RouterGroup[T] {
 	newGroup := &RouterGroup[T]{}
 	newGroup.Prefix = prefix
 
-	group.Children = append(group.Children, newGroup)
+	group.children = append(group.children, newGroup)
 
 	return newGroup
 }
@@ -46,10 +46,10 @@ func (group *RouterGroup[T]) BindFunc(middlewareFuncs ...func(e T) error) *Route
 func (group *RouterGroup[T]) Bind(middlewares ...*hook.Handler[T]) *RouterGroup[T] {
 	group.Middlewares = AppendSortedHandlers(group.Middlewares, middlewares...)
 
-	if group.ExcludedMiddlewares != nil {
+	if group.excludedMiddlewares != nil {
 		for _, m := range middlewares {
 			if m.Id != "" {
-				delete(group.ExcludedMiddlewares, m.Id)
+				delete(group.excludedMiddlewares, m.Id)
 			}
 		}
 	}
@@ -71,8 +71,8 @@ func (group *RouterGroup[T]) Unbind(middlewareIds ...string) *RouterGroup[T] {
 			}
 		}
 
-		for i := len(group.Children) - 1; i >= 0; i-- {
-			switch v := group.Children[i].(type) {
+		for i := len(group.children) - 1; i >= 0; i-- {
+			switch v := group.children[i].(type) {
 			case *RouterGroup[T]:
 				v.Unbind(middlewareId)
 			case *Route[T]:
@@ -80,10 +80,10 @@ func (group *RouterGroup[T]) Unbind(middlewareIds ...string) *RouterGroup[T] {
 			}
 		}
 
-		if group.ExcludedMiddlewares == nil {
-			group.ExcludedMiddlewares = map[string]struct{}{}
+		if group.excludedMiddlewares == nil {
+			group.excludedMiddlewares = map[string]struct{}{}
 		}
-		group.ExcludedMiddlewares[middlewareId] = struct{}{}
+		group.excludedMiddlewares[middlewareId] = struct{}{}
 	}
 
 	return group
@@ -106,7 +106,7 @@ func (group *RouterGroup[T]) Route(method string, path string, action func(e T) 
 		Action: action,
 	}
 
-	group.Children = append(group.Children, route)
+	group.children = append(group.children, route)
 
 	return route
 }
@@ -168,7 +168,7 @@ func (group *RouterGroup[T]) HasRoute(method string, path string) bool {
 }
 
 func (group *RouterGroup[T]) hasRoute(pattern string, parents []*RouterGroup[T]) bool {
-	for _, child := range group.Children {
+	for _, child := range group.children {
 		switch v := child.(type) {
 		case *RouterGroup[T]:
 			if v.hasRoute(pattern, append(parents, group)) {
