@@ -166,6 +166,10 @@ func (e *RequestEvent[T]) initRequestInfo() error {
 		infoCtx = "default"
 	}
 
+	// Enable body replay before consuming it so that handlers called after
+	// RequestInfo() can still read the body via BindBody().
+	e.EnableBodyReread()
+
 	info := acquireRequestInfo()
 	info.Context = infoCtx
 	info.Method = e.Request.Method

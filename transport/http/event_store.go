@@ -1,9 +1,8 @@
-package hook
+package http
 
 import "github.com/lumm2509/keel/infra/store"
 
 // EventData is an embed that adds a KV store per-event.
-// All event types from the transports embed this.
 type EventData struct {
 	data store.Store[string, any]
 }

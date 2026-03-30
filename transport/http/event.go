@@ -32,7 +32,7 @@ type Event struct {
 	Request  *http.Request
 
 	hook.Event
-	hook.EventData
+	EventData
 }
 
 // RWUnwrapper specifies that an http.ResponseWriter could be "unwrapped"

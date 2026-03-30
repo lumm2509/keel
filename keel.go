@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	stdhttp "net/http"
 	"os"
@@ -345,11 +346,21 @@ func (a *App[T]) serve(config ServeConfig) error {
 		Func: func(te *TerminateEvent[T]) error {
 			prepared.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			shutdownTimeout := config.ShutdownTimeout
+			if shutdownTimeout <= 0 {
+				shutdownTimeout = 30 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
 
 			wg.Add(1)
-			_ = prepared.Server.Shutdown(ctx)
+			if err := prepared.Server.Shutdown(ctx); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+				logger := slog.Default()
+				if a.config != nil && a.config.Logger != nil {
+					logger = a.config.Logger
+				}
+				logger.Error("graceful shutdown incomplete, some connections were forcibly closed", "error", err)
+			}
 
 			if te.IsRestart {
 				time.AfterFunc(3*time.Second, func() { wg.Done() })
@@ -405,7 +416,13 @@ func (a *App[T]) serve(config ServeConfig) error {
 	if config.HttpsAddr != "" {
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
-				_ = stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil))
+				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
+					logger := slog.Default()
+					if a.config != nil && a.config.Logger != nil {
+						logger = a.config.Logger
+					}
+					logger.Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+				}
 			}()
 		}
 		err = prepared.Server.ServeTLS(listener, "", "")

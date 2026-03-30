@@ -52,6 +52,43 @@ func TestRequestEventReleaseClearsCachedRequestInfo(t *testing.T) {
 	}
 }
 
+func TestRequestEventRequestInfoPreservesBodyForSubsequentBindBody(t *testing.T) {
+	t.Parallel()
+
+	body := `{"name":"test","value":42}`
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = &RereadableReadCloser{
+		ReadCloser: req.Body,
+		Lazy:       true,
+	}
+
+	event := &RequestEvent[struct{}]{}
+	event.Reset(nil, httptest.NewRecorder(), req)
+
+	// Simulate a middleware calling RequestInfo().
+	info, err := event.RequestInfo()
+	if err != nil {
+		t.Fatalf("RequestInfo failed: %v", err)
+	}
+	if got, ok := info.Body["name"]; !ok || got.(string) != "test" {
+		t.Fatalf("expected body[name]=%q from RequestInfo, got %v", "test", info.Body)
+	}
+
+	// The handler must still be able to read the body after RequestInfo consumed it.
+	var dst struct {
+		Name  string  `json:"name"`
+		Value float64 `json:"value"`
+	}
+	if err := event.BindBody(&dst); err != nil {
+		t.Fatalf("BindBody after RequestInfo failed: %v", err)
+	}
+	if dst.Name != "test" || dst.Value != 42 {
+		t.Fatalf("expected {name:test value:42}, got %+v", dst)
+	}
+}
+
 func BenchmarkRequestEventRequestInfo(b *testing.B) {
 	newEvent := func() *RequestEvent[struct{}] {
 		req := httptest.NewRequest(http.MethodPost, "/api/items?foo=bar&baz=qux", strings.NewReader(`{"alpha":1,"beta":"test"}`))

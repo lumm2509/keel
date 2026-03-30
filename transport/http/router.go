@@ -165,7 +165,7 @@ type routeBuildState[T hook.Resolver] struct {
 func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state routeBuildState[T]) error {
 	nextState := routeBuildState[T]{
 		prefix:       state.prefix + group.Prefix,
-		middlewares:  hook.MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
+		middlewares:  MergeIncludedHandlers(state.middlewares, group.ExcludedMiddlewares, group.Middlewares, group.ExcludedMiddlewares),
 		errorHandler: state.errorHandler,
 	}
 	if group.ErrorHandler != nil {
@@ -179,10 +179,15 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 				return err
 			}
 		case *Route[T]:
-			routeHandlers := hook.MergeIncludedHandlers(nextState.middlewares, v.ExcludedMiddlewares, v.Middlewares, v.ExcludedMiddlewares)
-			routeHook := &hook.Hook[T]{}
-			routeHook.SetSortedHandlers(routeHandlers)
+			routeHandlers := MergeIncludedHandlers(nextState.middlewares, v.ExcludedMiddlewares, v.Middlewares, v.ExcludedMiddlewares)
 			hasMiddlewares := len(routeHandlers) > 0
+			var routeHook *hook.Hook[T]
+			if hasMiddlewares {
+				routeHook = &hook.Hook[T]{}
+				for _, h := range routeHandlers {
+					routeHook.Bind(h)
+				}
+			}
 
 			routePattern := nextState.prefix + v.Path
 			if v.Method != "" {
@@ -224,7 +229,7 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 
 				var err error
 				if hasMiddlewares {
-					err = routeHook.TriggerWithOneOff(event, v.Action)
+					err = routeHook.Trigger(event, v.Action)
 				} else {
 					err = v.Action(event)
 				}

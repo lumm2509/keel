@@ -10,10 +10,6 @@ type Resolver interface {
 	setNextFunc(f func() error)
 }
 
-type nextInvoker interface {
-	next() error
-}
-
 var _ Resolver = (*Event)(nil)
 
 // Event implements [Resolver] and it is intended to be used as a base
@@ -27,16 +23,11 @@ var _ Resolver = (*Event)(nil)
 //		SomeField int
 //	}
 type Event struct {
-	next   func() error
-	runner nextInvoker
+	next func() error
 }
 
 // Next calls the next hook handler.
 func (e *Event) Next() error {
-	if e.runner != nil {
-		return e.runner.next()
-	}
-
 	if e.next != nil {
 		return e.next()
 	}
@@ -45,20 +36,10 @@ func (e *Event) Next() error {
 
 // nextFunc returns the function that Next calls.
 func (e *Event) nextFunc() func() error {
-	if e.runner != nil {
-		return e.runner.next
-	}
-
 	return e.next
 }
 
 // setNextFunc sets the function that Next calls.
 func (e *Event) setNextFunc(f func() error) {
-	e.runner = nil
 	e.next = f
-}
-
-func (e *Event) setNextState(runner nextInvoker) {
-	e.runner = runner
-	e.next = nil
 }
