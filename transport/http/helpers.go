@@ -44,6 +44,11 @@ func MergeIncludedHandlers[T hook.Resolver](left []*hook.Handler[T], leftExclude
 			break
 		}
 
+		// Both exhausted after skipping excluded items.
+		if i >= len(left) && j >= len(right) {
+			break
+		}
+
 		switch {
 		case i >= len(left):
 			result = append(result, right[j])
