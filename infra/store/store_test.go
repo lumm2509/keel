@@ -381,10 +381,11 @@ func TestMarshalJSON(t *testing.T) {
 	}
 }
 
-func TestShrink(t *testing.T) {
+func TestRemoveBulk(t *testing.T) {
 	s := &store.Store[string, int]{}
 
-	total := 1000
+	const total = 1000
+	const removeCount = 200
 
 	for i := 0; i < total; i++ {
 		s.Set(strconv.Itoa(i), i)
@@ -394,14 +395,12 @@ func TestShrink(t *testing.T) {
 		t.Fatalf("Expected %d items, got %d", total, s.Length())
 	}
 
-	// trigger map "shrink"
-	for i := 0; i < store.ShrinkThreshold; i++ {
+	for i := 0; i < removeCount; i++ {
 		s.Remove(strconv.Itoa(i))
 	}
 
-	// ensure that after the deletion, the new map was copied properly
-	if s.Length() != total-store.ShrinkThreshold {
-		t.Fatalf("Expected %d items, got %d", total-store.ShrinkThreshold, s.Length())
+	if s.Length() != total-removeCount {
+		t.Fatalf("Expected %d items, got %d", total-removeCount, s.Length())
 	}
 
 	for k := range s.GetAll() {
@@ -409,7 +408,7 @@ func TestShrink(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to convert %s into int: %v", k, err)
 		}
-		if kInt < store.ShrinkThreshold {
+		if kInt < removeCount {
 			t.Fatalf("Key %q should have been deleted", k)
 		}
 	}

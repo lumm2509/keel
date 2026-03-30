@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-const ShrinkThreshold = 200
-
 // Store defines a concurrent safe in memory key-value data store.
 type Store[K comparable, T any] struct {
 	data map[K]T

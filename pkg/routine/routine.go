@@ -1,7 +1,7 @@
 package routine
 
 import (
-	"log"
+	"log/slog"
 	"runtime"
 	"sync"
 )
@@ -22,11 +22,9 @@ func FireAndForget(f func(), wg ...*sync.WaitGroup) {
 
 		defer func() {
 			if err := recover(); err != nil {
-				log.Println("RECOVERED FROM PANIC (safe to ignore):", err)
-
-				stack := make([]byte, 2<<10) // 2 KB
+				stack := make([]byte, 2<<10)
 				length := runtime.Stack(stack, false)
-				log.Println(string(stack[:length]))
+				slog.Error("goroutine panic recovered", "error", err, "stack", string(stack[:length]))
 			}
 		}()
 
