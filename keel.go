@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +25,10 @@ import (
 )
 
 var Version = "(untracked)"
+
+// restartGracePeriod is the time the server waits after initiating a restart
+// before signaling the WaitGroup done, allowing the new process to take over.
+const restartGracePeriod = 3 * time.Second
 
 type ServeConfig = apis.ServeConfig
 
@@ -58,18 +60,18 @@ type Config[T any] struct {
 	HideStartBanner bool
 }
 
-func (cfg Config[T]) apply(b *builderConfig[T]) {
+func (cfg Config[T]) apply(b *Config[T]) {
 	if cfg.Context != nil {
-		b.context = cfg.Context
+		b.Context = cfg.Context
 	}
 	if cfg.ContextFactory != nil {
-		b.contextFactory = cfg.ContextFactory
+		b.ContextFactory = cfg.ContextFactory
 	}
 	if cfg.Module != nil {
-		b.config = cfg.Module
+		b.Module = cfg.Module
 	}
-	b.hmr = cfg.HMR
-	b.hideStartBanner = cfg.HideStartBanner
+	b.HMR = cfg.HMR
+	b.HideStartBanner = cfg.HideStartBanner
 }
 
 type App[T any] struct {
@@ -89,58 +91,50 @@ type App[T any] struct {
 }
 
 type Option[T any] interface {
-	apply(*builderConfig[T])
+	apply(*Config[T])
 }
 
-type builderConfig[T any] struct {
-	context         *T
-	contextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
-	config          *config.ConfigModule
-	hmr             commands.HMRFunc
-	hideStartBanner bool
-}
+type optionFunc[T any] func(*Config[T])
 
-type optionFunc[T any] func(*builderConfig[T])
-
-func (fn optionFunc[T]) apply(cfg *builderConfig[T]) {
+func (fn optionFunc[T]) apply(cfg *Config[T]) {
 	fn(cfg)
 }
 
 // WithContext sets the app-scoped context that will be shared across all requests.
 func WithContext[T any](ctx *T) Option[T] {
-	return optionFunc[T](func(cfg *builderConfig[T]) {
-		cfg.context = ctx
+	return optionFunc[T](func(cfg *Config[T]) {
+		cfg.Context = ctx
 	})
 }
 
 // WithContextFactory sets a per-request factory that creates a new T for each request.
 func WithContextFactory[T any](fn func(stdhttp.ResponseWriter, *stdhttp.Request) *T) Option[T] {
-	return optionFunc[T](func(cfg *builderConfig[T]) {
-		cfg.contextFactory = fn
+	return optionFunc[T](func(cfg *Config[T]) {
+		cfg.ContextFactory = fn
 	})
 }
 
 func WithConfig[T any](cfgModule *config.ConfigModule) Option[T] {
-	return optionFunc[T](func(cfg *builderConfig[T]) {
-		cfg.config = cfgModule
+	return optionFunc[T](func(cfg *Config[T]) {
+		cfg.Module = cfgModule
 	})
 }
 
 func WithHMR[T any](hmr commands.HMRFunc) Option[T] {
-	return optionFunc[T](func(cfg *builderConfig[T]) {
-		cfg.hmr = hmr
+	return optionFunc[T](func(cfg *Config[T]) {
+		cfg.HMR = hmr
 	})
 }
 
 func WithHideStartBanner[T any](hide bool) Option[T] {
-	return optionFunc[T](func(cfg *builderConfig[T]) {
-		cfg.hideStartBanner = hide
+	return optionFunc[T](func(cfg *Config[T]) {
+		cfg.HideStartBanner = hide
 	})
 }
 
 func New[T any](options ...Option[T]) *App[T] {
 	executableName := filepath.Base(os.Args[0])
-	builtConfig := resolveAppConfig(options...)
+	cfg := resolveAppConfig(options...)
 
 	rootCmd := &cobra.Command{
 		Use:     executableName,
@@ -153,11 +147,11 @@ func New[T any](options ...Option[T]) *App[T] {
 	}
 
 	app := &App[T]{
-		context:         builtConfig.context,
-		contextFactory:  builtConfig.contextFactory,
-		config:          builtConfig.config,
-		hmr:             builtConfig.hmr,
-		hideStartBanner: builtConfig.hideStartBanner,
+		context:         cfg.Context,
+		contextFactory:  cfg.ContextFactory,
+		config:          cfg.Module,
+		hmr:             cfg.HMR,
+		hideStartBanner: cfg.HideStartBanner,
 		rootCmd:         rootCmd,
 		onBootstrap:     &hook.Hook[*BootstrapEvent[T]]{},
 		onServe:         &hook.Hook[*ServeEvent[T]]{},
@@ -191,8 +185,8 @@ func New[T any](options ...Option[T]) *App[T] {
 	return app
 }
 
-func resolveAppConfig[T any](options ...Option[T]) builderConfig[T] {
-	cfg := builderConfig[T]{}
+func resolveAppConfig[T any](options ...Option[T]) Config[T] {
+	cfg := Config[T]{}
 
 	for _, option := range options {
 		if option != nil {
@@ -200,8 +194,8 @@ func resolveAppConfig[T any](options ...Option[T]) builderConfig[T] {
 		}
 	}
 
-	if cfg.config == nil {
-		cfg.config = &config.ConfigModule{}
+	if cfg.Module == nil {
+		cfg.Module = &config.ConfigModule{}
 	}
 
 	return cfg
@@ -282,23 +276,34 @@ func (a *App[T]) skipBootstrap() bool {
 		return true
 	}
 
-	flags := []string{"-h", "--help", "-v", "--version"}
-
-	cmd, _, err := a.rootCmd.Find(os.Args[1:])
-	if err != nil {
-		return true
+	args := os.Args[1:]
+	cmd, _, err := a.rootCmd.Find(args)
+	if err != nil || cmd == nil {
+		return false
 	}
 
-	for _, arg := range os.Args[1:] {
-		if !slices.Contains(flags, arg) {
+	for _, arg := range args {
+		// Only consider the four standard help/version flags.
+		var name, short string
+		switch arg {
+		case "--help":
+			name = "help"
+		case "-h":
+			short = "h"
+		case "--version":
+			name = "version"
+		case "-v":
+			short = "v"
+		default:
 			continue
 		}
 
-		trimmed := strings.TrimLeft(arg, "-")
-		if len(trimmed) > 1 && cmd.Flags().Lookup(trimmed) == nil {
+		// If the flag is NOT registered as a local flag on the resolved command,
+		// it is Cobra's own global help/version flag → skip bootstrap.
+		if name != "" && cmd.Flags().Lookup(name) == nil {
 			return true
 		}
-		if len(trimmed) == 1 && cmd.Flags().ShorthandLookup(trimmed) == nil {
+		if short != "" && cmd.Flags().ShorthandLookup(short) == nil {
 			return true
 		}
 	}
@@ -374,7 +379,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 			}
 
 			if te.IsRestart {
-				time.AfterFunc(3*time.Second, func() { wg.Done() })
+				time.AfterFunc(restartGracePeriod, func() { wg.Done() })
 			} else {
 				wg.Done()
 			}

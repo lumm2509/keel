@@ -57,7 +57,13 @@ func Serve[T any](
 	if config.HttpsAddr != "" {
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
-				_ = stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil))
+				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
+					logger := slog.Default()
+					if cfg != nil && cfg.Logger != nil {
+						logger = cfg.Logger
+					}
+					logger.Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+				}
 			}()
 		}
 

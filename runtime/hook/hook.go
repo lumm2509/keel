@@ -1,8 +1,6 @@
 package hook
 
 import (
-	"cmp"
-	"slices"
 	"sync"
 
 	"github.com/lumm2509/keel/infra/security"
@@ -67,8 +65,6 @@ func (h *Hook[T]) Bind(handler *Handler[T]) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var exists bool
-
 	if handler.Id == "" {
 		handler.Id = generateHookId()
 
@@ -88,25 +84,26 @@ func (h *Hook[T]) Bind(handler *Handler[T]) string {
 			handler.Id = generateHookId()
 		}
 	} else {
-		// replace existing
+		// Remove existing handler with same ID before re-inserting in sorted position.
 		for i, existing := range h.handlers {
 			if existing.Id == handler.Id {
-				h.handlers[i] = handler
-				exists = true
+				h.handlers = append(h.handlers[:i], h.handlers[i+1:]...)
 				break
 			}
 		}
 	}
 
-	// append new
-	if !exists {
-		h.handlers = append(h.handlers, handler)
+	// Insert in ascending Priority order (O(n) insertion sort).
+	insertAt := len(h.handlers)
+	for i, existing := range h.handlers {
+		if existing.Priority > handler.Priority {
+			insertAt = i
+			break
+		}
 	}
-
-	// sort handlers by Priority, preserving the original order of equal items
-	slices.SortStableFunc(h.handlers, func(a, b *Handler[T]) int {
-		return cmp.Compare(a.Priority, b.Priority)
-	})
+	h.handlers = append(h.handlers, nil)
+	copy(h.handlers[insertAt+1:], h.handlers[insertAt:])
+	h.handlers[insertAt] = handler
 
 	return handler.Id
 }
