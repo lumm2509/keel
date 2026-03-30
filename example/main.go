@@ -29,18 +29,16 @@ var (
 )
 
 func main() {
-	cfg := &config.ConfigModule{}
-
 	myApp := &MyApp{
 		Name:    "example",
 		Version: "0.2.0",
 		IsDev:   true,
 	}
 
-	app := keel.New(
-		keel.WithConfig[MyApp](cfg),
-		keel.WithContext(myApp),
-	)
+	app := keel.New(keel.Config[MyApp]{
+		Context: myApp,
+		Module:  &config.Config{},
+	})
 
 	app.BindFunc(observability.Middleware[MyApp](nil /* uses slog.Default() */))
 	app.BindFunc(func(c *keel.Context[MyApp]) error {

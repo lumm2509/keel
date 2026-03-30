@@ -9,7 +9,7 @@ import (
 func TestBootstrapTriggersOnBootstrapHook(t *testing.T) {
 	t.Parallel()
 
-	app := New[struct{}]()
+	app := New[struct{}](Config[struct{}]{})
 
 	called := false
 	app.OnBootstrap().BindFunc(func(e *BootstrapEvent[struct{}]) error {
@@ -29,7 +29,7 @@ func TestBootstrapTriggersOnBootstrapHook(t *testing.T) {
 func TestBootstrapHookErrorAbortsInit(t *testing.T) {
 	t.Parallel()
 
-	app := New[struct{}]()
+	app := New[struct{}](Config[struct{}]{})
 
 	sentinel := errors.New("hook abort")
 	app.OnBootstrap().BindFunc(func(e *BootstrapEvent[struct{}]) error {
@@ -44,7 +44,7 @@ func TestBootstrapHookErrorAbortsInit(t *testing.T) {
 func TestTerminateTriggersOnTerminateHook(t *testing.T) {
 	t.Parallel()
 
-	app := New[struct{}]()
+	app := New[struct{}](Config[struct{}]{})
 
 	if err := app.bootstrap(); err != nil {
 		t.Fatalf("bootstrap() error = %v", err)
@@ -73,19 +73,19 @@ func TestSkipBootstrapReturnsTrueForHelpFlag(t *testing.T) {
 
 	os.Args = []string{"app", "--help"}
 
-	app := New[struct{}]()
+	app := New[struct{}](Config[struct{}]{})
 	if !app.skipBootstrap() {
 		t.Fatal("expected skipBootstrap() = true for --help flag")
 	}
 }
 
-func TestBootstrapCallsInitOnAppIfImplemented(t *testing.T) {
+func TestBootstrapCallsOnBootstrapHook(t *testing.T) {
 	t.Parallel()
 
-	type myApp struct{ initCalled bool }
+	type myApp struct{ Name string }
 
-	appCtx := &myApp{}
-	app := New[myApp](WithContext(appCtx))
+	appCtx := &myApp{Name: "test"}
+	app := New[myApp](Config[myApp]{Context: appCtx})
 
 	var gotApp *myApp
 	app.OnBootstrap().BindFunc(func(e *BootstrapEvent[myApp]) error {
@@ -102,13 +102,13 @@ func TestBootstrapCallsInitOnAppIfImplemented(t *testing.T) {
 	}
 }
 
-func TestWithContextPropagatedToApp(t *testing.T) {
+func TestConfigContextPropagatedToApp(t *testing.T) {
 	t.Parallel()
 
 	type myApp struct{ Name string }
 	ctx := &myApp{Name: "test"}
 
-	app := New[myApp](WithContext(ctx))
+	app := New[myApp](Config[myApp]{Context: ctx})
 
 	if app.Context() != ctx {
 		t.Fatalf("expected Context() to return provided context pointer")

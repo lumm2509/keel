@@ -78,7 +78,7 @@ func TestMiddlewareCapturesRequestContext(t *testing.T) {
 
 	capture, logger := newCapture()
 
-	app := keel.New[testApp](keel.WithContext(&testApp{}))
+	app := keel.New[testApp](keel.Config[testApp]{Context: &testApp{}})
 	app.BindFunc(observability.Middleware[testApp](logger))
 
 	app.GET("/users/{id}", func(c *keel.Context[testApp]) error {
@@ -158,7 +158,7 @@ func TestMiddlewareRecoversPanics(t *testing.T) {
 
 	capture, logger := newCapture()
 
-	app := keel.New[struct{}]()
+	app := keel.New[struct{}](keel.Config[struct{}]{})
 	app.BindFunc(observability.Middleware[struct{}](logger))
 	app.GET("/panic", func(c *keel.Context[struct{}]) error {
 		panic("boom")

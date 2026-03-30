@@ -30,6 +30,12 @@ var Version = "(untracked)"
 // before signaling the WaitGroup done, allowing the new process to take over.
 const restartGracePeriod = 3 * time.Second
 
+// ModerncDepsCheckHookId is the bootstrap hook identifier used by dependent modules
+// (e.g. github.com/pocketbase/pocketbase) to register a modernc.org/sqlite version
+// compatibility check. It is exported so that those modules can reference it by name
+// without embedding a string literal.
+const ModerncDepsCheckHookId = "keelModerncDepsCheck"
+
 type ServeConfig = apis.ServeConfig
 
 type BootstrapEvent[T any] struct {
@@ -52,26 +58,25 @@ type ServeEvent[T any] struct {
 	Listener    net.Listener
 }
 
+// Config holds all options for creating a new App.
+// Pass it directly to New: keel.New(keel.Config[MyApp]{...}).
 type Config[T any] struct {
-	Context         *T
-	ContextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
-	Module          *config.ConfigModule
-	HMR             commands.HMRFunc
-	HideStartBanner bool
-}
+	// Context is the app-scoped value shared across all requests.
+	// Mutually exclusive with ContextFactory.
+	Context *T
 
-func (cfg Config[T]) apply(b *Config[T]) {
-	if cfg.Context != nil {
-		b.Context = cfg.Context
-	}
-	if cfg.ContextFactory != nil {
-		b.ContextFactory = cfg.ContextFactory
-	}
-	if cfg.Module != nil {
-		b.Module = cfg.Module
-	}
-	b.HMR = cfg.HMR
-	b.HideStartBanner = cfg.HideStartBanner
+	// ContextFactory creates a new T per request.
+	// Mutually exclusive with Context.
+	ContextFactory func(stdhttp.ResponseWriter, *stdhttp.Request) *T
+
+	// Module is the shared configuration (logger, data dir, TLS, etc.).
+	Module *config.Config
+
+	// HMR enables Hot Module Reload in the develop command.
+	HMR commands.HMRFunc
+
+	// HideStartBanner suppresses the startup banner.
+	HideStartBanner bool
 }
 
 type App[T any] struct {
@@ -79,7 +84,7 @@ type App[T any] struct {
 
 	context         *T
 	contextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
-	config          *config.ConfigModule
+	config          *config.Config
 	hmr             commands.HMRFunc
 	hideStartBanner bool
 	bootstrapped    bool
@@ -90,51 +95,13 @@ type App[T any] struct {
 	rootCmd *cobra.Command
 }
 
-type Option[T any] interface {
-	apply(*Config[T])
-}
-
-type optionFunc[T any] func(*Config[T])
-
-func (fn optionFunc[T]) apply(cfg *Config[T]) {
-	fn(cfg)
-}
-
-// WithContext sets the app-scoped context that will be shared across all requests.
-func WithContext[T any](ctx *T) Option[T] {
-	return optionFunc[T](func(cfg *Config[T]) {
-		cfg.Context = ctx
-	})
-}
-
-// WithContextFactory sets a per-request factory that creates a new T for each request.
-func WithContextFactory[T any](fn func(stdhttp.ResponseWriter, *stdhttp.Request) *T) Option[T] {
-	return optionFunc[T](func(cfg *Config[T]) {
-		cfg.ContextFactory = fn
-	})
-}
-
-func WithConfig[T any](cfgModule *config.ConfigModule) Option[T] {
-	return optionFunc[T](func(cfg *Config[T]) {
-		cfg.Module = cfgModule
-	})
-}
-
-func WithHMR[T any](hmr commands.HMRFunc) Option[T] {
-	return optionFunc[T](func(cfg *Config[T]) {
-		cfg.HMR = hmr
-	})
-}
-
-func WithHideStartBanner[T any](hide bool) Option[T] {
-	return optionFunc[T](func(cfg *Config[T]) {
-		cfg.HideStartBanner = hide
-	})
-}
-
-func New[T any](options ...Option[T]) *App[T] {
+// New creates a new App from the provided Config.
+func New[T any](cfg Config[T]) *App[T] {
 	executableName := filepath.Base(os.Args[0])
-	cfg := resolveAppConfig(options...)
+
+	if cfg.Module == nil {
+		cfg.Module = &config.Config{}
+	}
 
 	rootCmd := &cobra.Command{
 		Use:     executableName,
@@ -185,22 +152,6 @@ func New[T any](options ...Option[T]) *App[T] {
 	return app
 }
 
-func resolveAppConfig[T any](options ...Option[T]) Config[T] {
-	cfg := Config[T]{}
-
-	for _, option := range options {
-		if option != nil {
-			option.apply(&cfg)
-		}
-	}
-
-	if cfg.Module == nil {
-		cfg.Module = &config.ConfigModule{}
-	}
-
-	return cfg
-}
-
 func (a *App[T]) Start() error {
 	if len(os.Args) == 1 {
 		a.rootCmd.SetArgs([]string{"develop"})
@@ -245,9 +196,6 @@ func (a *App[T]) bootstrap() error {
 	event := &BootstrapEvent[T]{App: a.context}
 
 	err := a.OnBootstrap().Trigger(event, func(e *BootstrapEvent[T]) error {
-		if init, ok := any(e.App).(interface{ Init() error }); ok {
-			return init.Init()
-		}
 		return e.Next()
 	})
 	if err == nil {
@@ -264,9 +212,6 @@ func (a *App[T]) terminate(isRestart bool) error {
 	}
 
 	return a.OnTerminate().Trigger(event, func(e *TerminateEvent[T]) error {
-		if reset, ok := any(e.App).(interface{ Reset() error }); ok {
-			return reset.Reset()
-		}
 		return e.Next()
 	})
 }
@@ -323,12 +268,12 @@ func (a *App[T]) OnTerminate() *hook.Hook[*TerminateEvent[T]] {
 	return a.onTerminate
 }
 
-// Context returns the app-scoped T provided via WithContext.
+// Context returns the app-scoped T provided via Config.Context.
 func (a *App[T]) Context() *T {
 	return a.context
 }
 
-func (a *App[T]) Config() *config.ConfigModule {
+func (a *App[T]) Config() *config.Config {
 	return a.config
 }
 
@@ -371,11 +316,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 
 			wg.Add(1)
 			if err := prepared.Server.Shutdown(ctx); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-				logger := slog.Default()
-				if a.config != nil && a.config.Logger != nil {
-					logger = a.config.Logger
-				}
-				logger.Error("graceful shutdown incomplete, some connections were forcibly closed", "error", err)
+				resolveLogger(a.config).Error("graceful shutdown incomplete, some connections were forcibly closed", "error", err)
 			}
 
 			if te.IsRestart {
@@ -433,11 +374,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
 				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
-					logger := slog.Default()
-					if a.config != nil && a.config.Logger != nil {
-						logger = a.config.Logger
-					}
-					logger.Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+					resolveLogger(a.config).Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
 				}
 			}()
 		}
@@ -451,6 +388,14 @@ func (a *App[T]) serve(config ServeConfig) error {
 	}
 
 	return nil
+}
+
+// resolveLogger returns cfg.Logger if set, otherwise slog.Default().
+func resolveLogger(cfg *config.Config) *slog.Logger {
+	if cfg != nil && cfg.Logger != nil {
+		return cfg.Logger
+	}
+	return slog.Default()
 }
 
 func newErrWriter() *coloredWriter {
