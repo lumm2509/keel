@@ -11,11 +11,11 @@ import (
 )
 
 func CertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (*autocert.Manager, error) {
-	if cfg == nil || cfg.Projectconfig.Http == nil || cfg.Projectconfig.Http.AutoCert == nil {
+	if cfg == nil || cfg.Http == nil || cfg.Http.AutoCert == nil {
 		return nil, nil
 	}
 
-	autoCert := cfg.Projectconfig.Http.AutoCert
+	autoCert := cfg.Http.AutoCert
 	cacheDir := ""
 	if autoCert.CacheDir != nil {
 		cacheDir = *autoCert.CacheDir
@@ -24,7 +24,7 @@ func CertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (
 	var cache autocert.Cache
 	if cacheDir != "" {
 		if dataDir == "" {
-			return nil, errors.New("autocert cache dir requires container data dir")
+			return nil, errors.New("autocert cache dir requires a data dir to be set")
 		}
 		cache = autocert.DirCache(filepath.Join(dataDir, cacheDir))
 	}

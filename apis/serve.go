@@ -89,8 +89,8 @@ func PrepareServe[T any](
 	dataDir := ""
 	if provider, ok := any(ctx).(dataDirProvider); ok {
 		dataDir = provider.DataDir()
-	} else if cfg != nil && cfg.Projectconfig.DataDir != nil {
-		dataDir = *cfg.Projectconfig.DataDir
+	} else if cfg != nil && cfg.DataDir != nil {
+		dataDir = *cfg.DataDir
 	}
 
 	certManager, err := CertManager(cfg, dataDir, hostNames)
@@ -113,13 +113,12 @@ func PrepareServe[T any](
 
 	server.TLSConfig = TLSConfig(server.TLSConfig, certManager)
 
-	handler, err := router.BuildMux()
-	if err != nil {
+	if _, err := router.BuildMux(); err != nil {
 		cancelBaseCtx()
 		return nil, err
 	}
 
-	server.Handler = handler
+	server.Handler = router.Handler()
 
 	addr := server.Addr
 	if addr == "" {

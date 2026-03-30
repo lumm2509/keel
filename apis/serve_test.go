@@ -26,15 +26,9 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 
 	cacheDir := "autocert"
 	cfg := &config.ConfigModule{
-		Projectconfig: config.ProjectConfigOptions{
-			Http: &config.HttpConfigOptions{
-				AutoCert: &struct {
-					CacheDir      *string  `json:"cacheDir,omitempty"`
-					HostWhitelist []string `json:"hostWhitelist,omitempty"`
-					Email         *string  `json:"email,omitempty"`
-				}{
-					CacheDir: &cacheDir,
-				},
+		Http: &config.HttpConfig{
+			AutoCert: &config.AutoCertConfig{
+				CacheDir: &cacheDir,
 			},
 		},
 	}
@@ -44,7 +38,7 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 		t.Fatalf("expected CertManager() to fail when cache dir is configured without data dir")
 	}
 
-	if err.Error() != "autocert cache dir requires container data dir" {
+	if err.Error() != "autocert cache dir requires a data dir to be set" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
