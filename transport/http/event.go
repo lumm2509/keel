@@ -212,7 +212,7 @@ func parseProxyAddr(raw string) (netip.Addr, bool) {
 		value = host
 	}
 
-	value = strings.TrimPrefix(strings.TrimPrefix(value, "["), "]")
+	value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
 	addr, err := netip.ParseAddr(value)
 	if err != nil {
 		return netip.Addr{}, false

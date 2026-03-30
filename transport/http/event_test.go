@@ -313,6 +313,28 @@ func TestEventRealIPFromTrustedProxiesFallsBackToXRealIP(t *testing.T) {
 	}
 }
 
+func TestEventRealIPFromTrustedProxiesIPv6BareAddress(t *testing.T) {
+	t.Parallel()
+
+	// Bare bracketed IPv6 without port — previously silently failed due to
+	// TrimPrefix instead of TrimSuffix, causing the address to be unparseable.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	req.Header.Set("Forwarded", "for=\"[2001:db8::1]\", for=10.0.0.5")
+
+	event := router.Event{Request: req}
+	trusted := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+
+	got := event.RealIPFromTrustedProxies(trusted)
+	want := "2001:0db8:0000:0000:0000:0000:0000:0001"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestFindUploadedFiles(t *testing.T) {
 	scenarios := []struct {
 		filename        string
