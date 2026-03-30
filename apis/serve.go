@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
+
 type dataDirProvider interface {
 	DataDir() string
 }
@@ -28,6 +29,7 @@ type PreparedServe[T any] struct {
 	cancelBase  context.CancelFunc
 }
 
+
 func (p *PreparedServe[T]) Close() {
 	if p.cancelBase != nil {
 		p.cancelBase()
@@ -40,7 +42,7 @@ func (p *PreparedServe[T]) Close() {
 // Serve starts a new app web server.
 func Serve[T any](
 	ctx *T,
-	cfg *config.ConfigModule,
+	cfg *config.Config,
 	config ServeConfig,
 	router *transporthttp.Router[*transporthttp.RequestEvent[T]],
 ) error {
@@ -58,11 +60,7 @@ func Serve[T any](
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
 				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
-					logger := slog.Default()
-					if cfg != nil && cfg.Logger != nil {
-						logger = cfg.Logger
-					}
-					logger.Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+					resolveLogger(cfg).Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
 				}
 			}()
 		}
@@ -81,7 +79,7 @@ func Serve[T any](
 
 func PrepareServe[T any](
 	ctx *T,
-	cfg *config.ConfigModule,
+	cfg *config.Config,
 	config ServeConfig,
 	router *transporthttp.Router[*transporthttp.RequestEvent[T]],
 ) (*PreparedServe[T], error) {
@@ -152,14 +150,18 @@ func PrepareServe[T any](
 }
 
 type serverErrorLogWriter struct {
-	config *config.ConfigModule
+	config *config.Config
 }
 
 func (s *serverErrorLogWriter) Write(p []byte) (int, error) {
-	logger := slog.Default()
-	if s.config != nil && s.config.Logger != nil {
-		logger = s.config.Logger
-	}
-	logger.Debug(strings.TrimSpace(string(p)))
+	resolveLogger(s.config).Debug(strings.TrimSpace(string(p)))
 	return len(p), nil
+}
+
+// resolveLogger returns cfg.Logger if set, otherwise slog.Default().
+func resolveLogger(cfg *config.Config) *slog.Logger {
+	if cfg != nil && cfg.Logger != nil {
+		return cfg.Logger
+	}
+	return slog.Default()
 }
