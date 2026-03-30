@@ -80,10 +80,10 @@ type Option[T any] interface {
 }
 
 type builderConfig[T any] struct {
-	context        *T
-	contextFactory func(stdhttp.ResponseWriter, *stdhttp.Request) *T
-	config         *config.ConfigModule
-	hmr            commands.HMRFunc
+	context         *T
+	contextFactory  func(stdhttp.ResponseWriter, *stdhttp.Request) *T
+	config          *config.ConfigModule
+	hmr             commands.HMRFunc
 	hideStartBanner bool
 }
 
@@ -140,12 +140,12 @@ func New[T any](options ...Option[T]) *App[T] {
 	}
 
 	app := &App[T]{
-		context:        builtConfig.context,
-		contextFactory: builtConfig.contextFactory,
-		config:         builtConfig.config,
-		hmr:            builtConfig.hmr,
+		context:         builtConfig.context,
+		contextFactory:  builtConfig.contextFactory,
+		config:          builtConfig.config,
+		hmr:             builtConfig.hmr,
 		hideStartBanner: builtConfig.hideStartBanner,
-		rootCmd:        rootCmd,
+		rootCmd:         rootCmd,
 	}
 
 	requestEventPool := sync.Pool{

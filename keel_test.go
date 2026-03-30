@@ -36,8 +36,7 @@ func TestBootstrapHookErrorAbortsInit(t *testing.T) {
 		return sentinel
 	})
 
-	err := app.bootstrap()
-	if !errors.Is(err, sentinel) {
+	if err := app.bootstrap(); !errors.Is(err, sentinel) {
 		t.Fatalf("expected sentinel error, got %v", err)
 	}
 }
@@ -83,13 +82,11 @@ func TestSkipBootstrapReturnsTrueForHelpFlag(t *testing.T) {
 func TestBootstrapCallsInitOnAppIfImplemented(t *testing.T) {
 	t.Parallel()
 
-	type myApp struct {
-		initCalled bool
-	}
+	type myApp struct{ initCalled bool }
 
-	app := New[myApp](WithContext(&myApp{}))
+	appCtx := &myApp{}
+	app := New[myApp](WithContext(appCtx))
 
-	// Patch Init via interface — store result via OnBootstrap hook
 	var gotApp *myApp
 	app.OnBootstrap().BindFunc(func(e *BootstrapEvent[myApp]) error {
 		gotApp = e.App
@@ -100,12 +97,12 @@ func TestBootstrapCallsInitOnAppIfImplemented(t *testing.T) {
 		t.Fatalf("bootstrap() error = %v", err)
 	}
 
-	if gotApp == nil {
-		t.Fatal("expected App to be set on BootstrapEvent")
+	if gotApp != appCtx {
+		t.Fatal("expected App pointer on BootstrapEvent to match provided context")
 	}
 }
 
-func TestWithContextPropagatedToRequestEvent(t *testing.T) {
+func TestWithContextPropagatedToApp(t *testing.T) {
 	t.Parallel()
 
 	type myApp struct{ Name string }
