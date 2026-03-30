@@ -2,7 +2,7 @@ package config
 
 import "log/slog"
 
-type ConfigModule struct {
+type Config struct {
 	Logger  *slog.Logger `json:"-"`
 	DataDir *string      `json:"dataDir,omitempty"`
 	Http    *HttpConfig  `json:"http,omitempty"`

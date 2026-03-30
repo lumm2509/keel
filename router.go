@@ -4,9 +4,9 @@ import (
 	transporthttp "github.com/lumm2509/keel/transport/http"
 )
 
-type Context[Cradle any] = transporthttp.RequestEvent[Cradle]
-type HandlerFunc[Cradle any] func(*Context[Cradle]) error
+type Context[T any] = transporthttp.RequestEvent[T]
+type HandlerFunc[T any] func(*Context[T]) error
 
-type Group[Cradle any] = transporthttp.RouterGroup[*transporthttp.RequestEvent[Cradle]]
+type Group[T any] = transporthttp.RouterGroup[*transporthttp.RequestEvent[T]]
 
 type Router[T any] = transporthttp.Router[*transporthttp.RequestEvent[T]]

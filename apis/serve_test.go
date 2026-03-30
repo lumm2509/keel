@@ -25,7 +25,7 @@ func TestBuildCertManagerFailsWhenAutoCertCacheDirHasNoDataDir(t *testing.T) {
 	t.Parallel()
 
 	cacheDir := "autocert"
-	cfg := &config.ConfigModule{
+	cfg := &config.Config{
 		Http: &config.HttpConfig{
 			AutoCert: &config.AutoCertConfig{
 				CacheDir: &cacheDir,

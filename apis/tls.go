@@ -10,7 +10,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-func CertManager(cfg *config.ConfigModule, dataDir string, hostNames []string) (*autocert.Manager, error) {
+func CertManager(cfg *config.Config, dataDir string, hostNames []string) (*autocert.Manager, error) {
 	if cfg == nil || cfg.Http == nil || cfg.Http.AutoCert == nil {
 		return nil, nil
 	}

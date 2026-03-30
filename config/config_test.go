@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestConfigModuleAutoCertRoundTrip(t *testing.T) {
+func TestConfigAutoCertRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	raw := []byte(`{
@@ -18,7 +18,7 @@ func TestConfigModuleAutoCertRoundTrip(t *testing.T) {
 		}
 	}`)
 
-	var cfg ConfigModule
+	var cfg Config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
@@ -37,10 +37,10 @@ func TestConfigModuleAutoCertRoundTrip(t *testing.T) {
 	}
 }
 
-func TestConfigModuleZeroValueIsUsable(t *testing.T) {
+func TestConfigZeroValueIsUsable(t *testing.T) {
 	t.Parallel()
 
-	var cfg ConfigModule
+	var cfg Config
 
 	if cfg.Http != nil {
 		t.Fatalf("Http = %#v, want nil by default", cfg.Http)
