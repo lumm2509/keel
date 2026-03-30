@@ -56,6 +56,10 @@ func TestDecrypt(t *testing.T) {
 		{"123", "test", true, ""}, // key must be valid 32 char aes string
 		{"8kcEqilvvYKYcfnSr0aSC54gmnQCsB02SaB8ATlnA==", "abcdabcdabcdabcdabcdabcdabcdabcd", true, ""}, // illegal base64 encoded cipherText
 		{"8kcEqilvv+YKYcfnSr0aSC54gmnQCsB02SaB8ATlnA==", "abcdabcdabcdabcdabcdabcdabcdabcd", false, "123"},
+		// truncated ciphertext: valid base64 but decodes to 0 bytes (< nonceSize=12) → must error, not panic
+		{"", "abcdabcdabcdabcdabcdabcdabcdabcd", true, ""},
+		// truncated ciphertext: valid base64, decodes to nonceSize-1 bytes → must error, not panic
+		{"AAAAAAAAAAAAAAAA", "abcdabcdabcdabcdabcdabcdabcdabcd", true, ""},
 	}
 
 	for i, s := range scenarios {

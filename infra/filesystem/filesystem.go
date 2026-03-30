@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"mime/multipart"
@@ -228,7 +229,9 @@ func (s *System) UploadFile(file *File, fileKey string) error {
 	}
 
 	// rewind
-	f.Seek(0, io.SeekStart)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek after MIME detection: %w", err)
+	}
 
 	originalName := file.OriginalName
 	if len(originalName) > 255 {
@@ -270,7 +273,9 @@ func (s *System) UploadMultipart(fh *multipart.FileHeader, fileKey string) error
 	}
 
 	// rewind
-	f.Seek(0, io.SeekStart)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek after MIME detection: %w", err)
+	}
 
 	originalName := fh.Filename
 	if len(originalName) > 255 {
