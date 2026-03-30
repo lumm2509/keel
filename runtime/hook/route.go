@@ -4,10 +4,12 @@ package hook
 type Route[T Resolver] struct {
 	ExcludedMiddlewares map[string]struct{}
 
-	Action      func(e T) error
-	Method      string
-	Path        string
-	Middlewares []*Handler[T]
+	Action       func(e T) error
+	Method       string
+	Path         string
+	Middlewares  []*Handler[T]
+	Handle       any              // arbitrary metadata readable by middleware via RouteHandleAs
+	ErrorHandler func(T, error) error // error boundary for this route; nil = propagate
 }
 
 // BindFunc registers one or multiple middleware functions to the current route.
@@ -53,5 +55,22 @@ func (route *Route[T]) Unbind(middlewareIds ...string) *Route[T] {
 		route.ExcludedMiddlewares[middlewareId] = struct{}{}
 	}
 
+	return route
+}
+
+// WithHandle attaches arbitrary metadata to the route.
+// Middleware can retrieve it via keel.RouteHandleAs.
+func (route *Route[T]) WithHandle(h any) *Route[T] {
+	route.Handle = h
+	return route
+}
+
+// OnError registers an error boundary for this route.
+// When the route's handler chain returns an error, fn is called before falling
+// through to any parent group boundary or the global error handler.
+// Return nil from fn to suppress the error, or return a different error to
+// replace it.
+func (route *Route[T]) OnError(fn func(T, error) error) *Route[T] {
+	route.ErrorHandler = fn
 	return route
 }

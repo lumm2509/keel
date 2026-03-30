@@ -15,8 +15,9 @@ type RouterGroup[T Resolver] struct {
 	ExcludedMiddlewares map[string]struct{}
 	Children            []any // *Route[T] or *RouterGroup[T]
 
-	Prefix      string
-	Middlewares []*Handler[T]
+	Prefix       string
+	Middlewares  []*Handler[T]
+	ErrorHandler func(T, error) error // error boundary for this group; nil = propagate
 }
 
 // Group creates and registers a new child Group into the current one
@@ -83,6 +84,15 @@ func (group *RouterGroup[T]) Unbind(middlewareIds ...string) *RouterGroup[T] {
 		group.ExcludedMiddlewares[middlewareId] = struct{}{}
 	}
 
+	return group
+}
+
+// OnError registers an error boundary for this group.
+// When any route inside this group (or a nested group without its own boundary)
+// returns an error, fn is called before falling through to the global error handler.
+// Return nil from fn to suppress the error, or return a different error to replace it.
+func (group *RouterGroup[T]) OnError(fn func(T, error) error) *RouterGroup[T] {
+	group.ErrorHandler = fn
 	return group
 }
 
