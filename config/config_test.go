@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"log/slog"
 	"testing"
 )
 
@@ -50,5 +51,33 @@ func TestConfigZeroValueIsUsable(t *testing.T) {
 	}
 	if cfg.Logger != nil {
 		t.Fatalf("Logger = %v, want nil by default", cfg.Logger)
+	}
+}
+
+func TestResolveLoggerNilConfigReturnsSlogDefault(t *testing.T) {
+	t.Parallel()
+
+	var cfg *Config
+	if got := cfg.ResolveLogger(); got != slog.Default() {
+		t.Fatalf("nil Config.ResolveLogger() should return slog.Default()")
+	}
+}
+
+func TestResolveLoggerNilLoggerFieldReturnsSlogDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{}
+	if got := cfg.ResolveLogger(); got != slog.Default() {
+		t.Fatalf("Config{}.ResolveLogger() should return slog.Default() when Logger is nil")
+	}
+}
+
+func TestResolveLoggerReturnsCustomLogger(t *testing.T) {
+	t.Parallel()
+
+	custom := slog.New(slog.NewTextHandler(nil, nil))
+	cfg := &Config{Logger: custom}
+	if got := cfg.ResolveLogger(); got != custom {
+		t.Fatalf("expected custom logger, got %v", got)
 	}
 }

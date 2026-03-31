@@ -1058,3 +1058,125 @@ func testEventResponseWrite[T any](
 		}
 	})
 }
+
+// testValidatable is a minimal Validatable used by BindAndValidate tests.
+type testValidatable struct {
+	Name        string `json:"name"`
+	validateErr error
+}
+
+func (v *testValidatable) Validate() error { return v.validateErr }
+
+func TestBindAndValidateBindError(t *testing.T) {
+	t.Parallel()
+
+	// Invalid JSON → BindBody fails → 400 ApiError.
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`not-json`))
+	req.Header.Set("Content-Type", "application/json")
+	e := router.Event{Response: httptest.NewRecorder(), Request: req}
+
+	err := router.BindAndValidate(&e, &testValidatable{})
+	if err == nil {
+		t.Fatal("expected error from bad JSON, got nil")
+	}
+	apiErr, ok := err.(*router.ApiError)
+	if !ok {
+		t.Fatalf("expected *ApiError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 400 {
+		t.Fatalf("expected status 400, got %d", apiErr.Status)
+	}
+}
+
+func TestBindAndValidateValidateError(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	e := router.Event{Response: httptest.NewRecorder(), Request: req}
+
+	v := &testValidatable{validateErr: errors.New("invalid field")}
+	err := router.BindAndValidate(&e, v)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	apiErr, ok := err.(*router.ApiError)
+	if !ok {
+		t.Fatalf("expected *ApiError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 400 {
+		t.Fatalf("expected status 400, got %d", apiErr.Status)
+	}
+}
+
+func TestBindAndValidateSuccess(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"alice"}`))
+	req.Header.Set("Content-Type", "application/json")
+	e := router.Event{Response: httptest.NewRecorder(), Request: req}
+
+	v := &testValidatable{}
+	if err := router.BindAndValidate(&e, v); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if v.Name != "alice" {
+		t.Fatalf("expected Name=alice, got %q", v.Name)
+	}
+}
+
+func TestEventBytesWrittenAfterJSON(t *testing.T) {
+	t.Parallel()
+
+	// BytesWritten() requires the ResponseWriter wrapper injected by the Router.
+	r := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*router.RequestEvent[struct{}], router.EventCleanupFunc) {
+		e := &router.RequestEvent[struct{}]{}
+		e.Reset(nil, w, req)
+		return e, nil
+	})
+
+	var bytesWritten int
+	r.GET("/bw", func(e *router.RequestEvent[struct{}]) error {
+		if err := e.JSON(http.StatusOK, map[string]string{"k": "v"}); err != nil {
+			return err
+		}
+		bytesWritten = e.BytesWritten()
+		return nil
+	})
+
+	handler, err := r.BuildMux()
+	if err != nil {
+		t.Fatalf("BuildMux: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/bw", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if bytesWritten == 0 {
+		t.Fatal("BytesWritten() should be > 0 after JSON()")
+	}
+}
+
+func TestEventHTMXReturnsNonNil(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	e := router.Event{Response: httptest.NewRecorder(), Request: req}
+
+	if h := e.HTMX(); h == nil {
+		t.Fatal("HTMX() returned nil")
+	}
+}
+
+func TestEventHTMXDetectsHTMXRequest(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("HX-Request", "true")
+	e := router.Event{Response: httptest.NewRecorder(), Request: req}
+
+	if !e.HTMX().IsHTMX() {
+		t.Fatal("HTMX().IsHTMX() should be true when HX-Request: true is set")
+	}
+}
