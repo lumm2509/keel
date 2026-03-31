@@ -1,8 +1,10 @@
 package http
 
 import (
+	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 
 	"github.com/lumm2509/keel/pkg/inflector"
@@ -86,12 +88,19 @@ func (info *RequestInfo) Clone() *RequestInfo {
 }
 
 // RequestEvent defines the router handler event.
+//
+// Like EventData, RequestEvent is single-goroutine per request: the middleware
+// chain is sequential and the event must not be shared across goroutines.
+// The one exception is cachedRequestInfo, which is lazily initialised by
+// RequestInfo() and protected by mu so that callers that explicitly pass the
+// event to a spawned goroutine do not race on the first call.
+// All other fields (App, EventData) carry no such guarantee.
 type RequestEvent[T any] struct {
-	App              *T
+	App               *T
 	cachedRequestInfo *RequestInfo
 	Event
 
-	mu sync.Mutex
+	mu sync.Mutex // guards cachedRequestInfo lazy init only
 }
 
 func clearStringMap[M ~map[string]string](m M) {
@@ -104,6 +113,29 @@ func clearAnyMap[M ~map[string]any](m M) {
 	for k := range m {
 		delete(m, k)
 	}
+}
+
+// Param returns the URL path parameter with the given name from the matched route.
+//
+// For example, given a route registered as GET /users/{id}, calling Param("id")
+// returns the value of the {id} segment.
+//
+// When KEEL_DEBUG is set and the name is not present in the matched route pattern
+// (likely a typo), a warning is logged to help catch the mistake early.
+func (e *RequestEvent[T]) Param(name string) string {
+	val := e.Request.PathValue(name)
+	if val == "" && isDebugMode() {
+		pattern, _ := e.Get(EventKeyRoutePattern).(string)
+		if !strings.Contains(pattern, "{"+name+"}") &&
+			!strings.Contains(pattern, "{"+name+"...}") {
+			slog.Warn("[keel/debug] Param() called with a name not found in the route pattern",
+				"param", name,
+				"pattern", pattern,
+				"hint", "check for a typo in the param name",
+			)
+		}
+	}
+	return val
 }
 
 // ClientIP returns the real client IP. If App implements TrustedProxyProvider,
