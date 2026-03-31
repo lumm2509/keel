@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"log/slog"
 	"net"
 	stdhttp "net/http"
 	"strings"
@@ -60,7 +59,7 @@ func Serve[T any](
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
 				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
-					resolveLogger(cfg).Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+					cfg.ResolveLogger().Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
 				}
 			}()
 		}
@@ -154,14 +153,7 @@ type serverErrorLogWriter struct {
 }
 
 func (s *serverErrorLogWriter) Write(p []byte) (int, error) {
-	resolveLogger(s.config).Debug(strings.TrimSpace(string(p)))
+	s.config.ResolveLogger().Debug(strings.TrimSpace(string(p)))
 	return len(p), nil
 }
 
-// resolveLogger returns cfg.Logger if set, otherwise slog.Default().
-func resolveLogger(cfg *config.Config) *slog.Logger {
-	if cfg != nil && cfg.Logger != nil {
-		return cfg.Logger
-	}
-	return slog.Default()
-}

@@ -3,8 +3,6 @@ package keel
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net"
 	stdhttp "net/http"
 	"os"
@@ -14,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/lumm2509/keel/apis"
 	"github.com/lumm2509/keel/commands"
 	"github.com/lumm2509/keel/config"
@@ -30,11 +27,6 @@ var Version = "(untracked)"
 // before signaling the WaitGroup done, allowing the new process to take over.
 const restartGracePeriod = 3 * time.Second
 
-// ModerncDepsCheckHookId is the bootstrap hook identifier used by dependent modules
-// (e.g. github.com/pocketbase/pocketbase) to register a modernc.org/sqlite version
-// compatibility check. It is exported so that those modules can reference it by name
-// without embedding a string literal.
-const ModerncDepsCheckHookId = "keelModerncDepsCheck"
 
 type ServeConfig = apis.ServeConfig
 
@@ -146,7 +138,7 @@ func New[T any](cfg Config[T]) *App[T] {
 		}
 	})
 
-	app.rootCmd.SetErr(newErrWriter())
+	app.rootCmd.SetErr(commands.NewColoredErrWriter())
 	app.rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	return app
@@ -316,7 +308,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 
 			wg.Add(1)
 			if err := prepared.Server.Shutdown(ctx); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-				resolveLogger(a.config).Error("graceful shutdown incomplete, some connections were forcibly closed", "error", err)
+				a.config.ResolveLogger().Error("graceful shutdown incomplete, some connections were forcibly closed", "error", err)
 			}
 
 			if te.IsRestart {
@@ -374,7 +366,7 @@ func (a *App[T]) serve(config ServeConfig) error {
 		if config.HttpAddr != "" && prepared.CertManager != nil {
 			go func() {
 				if err := stdhttp.ListenAndServe(config.HttpAddr, prepared.CertManager.HTTPHandler(nil)); err != nil {
-					resolveLogger(a.config).Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
+					a.config.ResolveLogger().Error("HTTP redirect listener failed", "addr", config.HttpAddr, "error", err)
 				}
 			}()
 		}
@@ -390,28 +382,3 @@ func (a *App[T]) serve(config ServeConfig) error {
 	return nil
 }
 
-// resolveLogger returns cfg.Logger if set, otherwise slog.Default().
-func resolveLogger(cfg *config.Config) *slog.Logger {
-	if cfg != nil && cfg.Logger != nil {
-		return cfg.Logger
-	}
-	return slog.Default()
-}
-
-func newErrWriter() *coloredWriter {
-	return &coloredWriter{
-		w: os.Stderr,
-		c: color.New(color.FgRed),
-	}
-}
-
-type coloredWriter struct {
-	w io.Writer
-	c *color.Color
-}
-
-func (colored *coloredWriter) Write(p []byte) (n int, err error) {
-	colored.c.SetWriter(colored.w)
-	defer colored.c.UnsetWriter(colored.w)
-	return colored.c.Print(string(p))
-}
