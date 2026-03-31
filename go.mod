@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/asaskevich/govalidator v0.0.0-20200108200545-475eaeb16496 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -28,7 +29,6 @@ require (
 
 require (
 	github.com/fatih/color v1.19.0
-	github.com/ganigeorgiev/fexpr v0.5.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/crypto v0.49.0
