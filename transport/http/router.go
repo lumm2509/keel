@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -248,6 +249,18 @@ func (r *Router[T]) loadMux(mux *http.ServeMux, group *RouterGroup[T], state rou
 					ErrorHandler(resp, req, err)
 				}
 
+				// Debug: warn when the chain completed without error but no response was
+				// written. The most common cause is a middleware that forgot e.Next().
+				if isDebugMode() && err == nil {
+					if written, _ := getWritten(resp); !written {
+						slog.Warn("[keel/debug] request completed without writing a response",
+							"method", req.Method,
+							"path", req.URL.Path,
+							"hint", "a middleware may have returned nil without calling e.Next(), or the handler forgot to write a response",
+						)
+					}
+				}
+
 				if cleanupFunc != nil {
 					cleanupFunc()
 				}
@@ -267,6 +280,19 @@ func ErrorHandler(resp http.ResponseWriter, req *http.Request, err error) {
 
 	if ok, _ := getWritten(resp); ok {
 		return // a response was already written (aka. already handled)
+	}
+
+	// Debug: log unexpected errors that are not ApiErrors so the developer
+	// knows what escaped their handlers and will be turned into a 500.
+	if isDebugMode() {
+		var apiErr *ApiError
+		if !errors.As(err, &apiErr) {
+			slog.Error("[keel/debug] unhandled error reached global handler (returning 500)",
+				"method", req.Method,
+				"path", req.URL.Path,
+				"error", err,
+			)
+		}
 	}
 
 	header := resp.Header()
