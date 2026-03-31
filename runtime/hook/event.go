@@ -1,11 +1,15 @@
 package hook
 
 // Resolver defines a common interface for a Hook event (see [Event]).
+//
+// The unexported methods nextFunc and setNextFunc are intentional: they seal
+// the interface so that only types embedding [Event] can satisfy it. This
+// keeps the hook chain implementation internal while still allowing the
+// exported Next() to be called freely from handler code.
 type Resolver interface {
 	// Next triggers the next handler in the hook's chain (if any).
 	Next() error
 
-	// note: kept only for the generic interface; may get removed in the future
 	nextFunc() func() error
 	setNextFunc(f func() error)
 }
