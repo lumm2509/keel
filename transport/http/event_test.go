@@ -19,7 +19,6 @@ import (
 	"strings"
 	"testing"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
 	router "github.com/lumm2509/keel/transport/http"
 )
 
@@ -783,83 +782,6 @@ func TestEventFileFS(t *testing.T) {
 				t.Fatalf("Expected Content-Length %d, got %d", len(s.expected), length)
 			}
 		})
-	}
-}
-
-func TestEventError(t *testing.T) {
-	err := new(router.Event).Error(123, "message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":123}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventBadRequestError(t *testing.T) {
-	err := new(router.Event).BadRequestError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":400}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventNotFoundError(t *testing.T) {
-	err := new(router.Event).NotFoundError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":404}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventForbiddenError(t *testing.T) {
-	err := new(router.Event).ForbiddenError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":403}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventUnauthorizedError(t *testing.T) {
-	err := new(router.Event).UnauthorizedError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":401}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventTooManyRequestsError(t *testing.T) {
-	err := new(router.Event).TooManyRequestsError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":429}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
-	}
-}
-
-func TestEventInternalServerError(t *testing.T) {
-	err := new(router.Event).InternalServerError("message_test", map[string]any{"a": validation.Required, "b": "test"})
-
-	result, _ := json.Marshal(err)
-	expected := `{"data":{"a":{"code":"validation_invalid_value","message":"Invalid value."},"b":{"code":"validation_invalid_value","message":"Invalid value."}},"message":"Message_test.","status":500}`
-
-	if string(result) != expected {
-		t.Errorf("Expected\n%s\ngot\n%s", expected, result)
 	}
 }
 

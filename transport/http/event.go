@@ -15,11 +15,44 @@ import (
 	"github.com/lumm2509/keel/infra/filesystem"
 	"github.com/lumm2509/keel/pkg/picker"
 	"github.com/lumm2509/keel/runtime/hook"
+	"github.com/lumm2509/keel/transport/htmx"
 )
 
 var ErrUnsupportedContentType = NewBadRequestError("Unsupported Content-Type", nil)
 var ErrInvalidRedirectStatusCode = NewInternalServerError("Invalid redirect status code", nil)
 var ErrFileNotFound = NewNotFoundError("File not found", nil)
+
+// BodyBinder is implemented by event types that can unmarshal a request body.
+// It is satisfied by *Event (and any struct that embeds it, such as *RequestEvent[T]).
+type BodyBinder interface {
+	BindBody(dst any) error
+}
+
+// Validatable is implemented by any type that can validate itself.
+// Compatible with github.com/go-ozzo/ozzo-validation/v4 out of the box.
+type Validatable interface {
+	Validate() error
+}
+
+// BindAndValidate binds the request body into dst and then validates it.
+// If binding fails, a 400 ApiError is returned.
+// If validation fails, a 400 ApiError is returned with structured field errors.
+//
+// Example:
+//
+//	var body CreateUserBody
+//	if err := http.BindAndValidate(c, &body); err != nil {
+//	    return err
+//	}
+func BindAndValidate[T Validatable](e BodyBinder, dst T) error {
+	if err := e.BindBody(dst); err != nil {
+		return NewBadRequestError("", err)
+	}
+	if err := dst.Validate(); err != nil {
+		return NewBadRequestError("", err)
+	}
+	return nil
+}
 
 const IndexPage = "index.html"
 
@@ -404,36 +437,23 @@ func (e *Event) Redirect(status int, url string) error {
 	return nil
 }
 
-// ApiError helpers
-// -------------------------------------------------------------------
-
-func (e *Event) Error(status int, message string, errData any) *ApiError {
-	return NewApiError(status, message, errData)
+// HTMX returns a scoped helper for reading HTMX request headers and setting
+// HTMX response headers on the current event.
+//
+// The returned *htmx.Event is cheap to construct (two pointer fields) and its
+// setters are fluent, so they can be chained in a single expression:
+//
+//	c.HTMX().PushURL("/items").Trigger("listUpdated")
+//
+// HTMX request inspection:
+//
+//	if !c.HTMX().IsHTMX() {
+//	    return keel.NewBadRequestError("htmx only", nil)
+//	}
+func (e *Event) HTMX() *htmx.Event {
+	return htmx.New(e.Request, e.Response)
 }
 
-func (e *Event) BadRequestError(message string, errData any) *ApiError {
-	return NewBadRequestError(message, errData)
-}
-
-func (e *Event) NotFoundError(message string, errData any) *ApiError {
-	return NewNotFoundError(message, errData)
-}
-
-func (e *Event) ForbiddenError(message string, errData any) *ApiError {
-	return NewForbiddenError(message, errData)
-}
-
-func (e *Event) UnauthorizedError(message string, errData any) *ApiError {
-	return NewUnauthorizedError(message, errData)
-}
-
-func (e *Event) TooManyRequestsError(message string, errData any) *ApiError {
-	return NewTooManyRequestsError(message, errData)
-}
-
-func (e *Event) InternalServerError(message string, errData any) *ApiError {
-	return NewInternalServerError(message, errData)
-}
 
 // Binders
 // -------------------------------------------------------------------
